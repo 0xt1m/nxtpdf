@@ -31,12 +31,20 @@ const PAGE_SCHEME: &str = "nxtpdf";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Only the release-only single-instance registration below reassigns this.
+    #[cfg_attr(debug_assertions, allow(unused_mut))]
     let mut builder = tauri::Builder::default();
 
     // Registered first, as Tauri requires. Double-clicking a PDF while NXTPDF
     // is already running would otherwise start a second copy, each with its
     // own document; instead the path is handed to the window already open.
-    #[cfg(desktop)]
+    //
+    // Debug builds opt out. The plugin identifies an instance by the app id,
+    // which a dev build shares with the installed one - so launching
+    // `pnpm app:dev` while the installed NXTPDF happened to be open handed the
+    // arguments over to it and exited immediately, leaving no dev window and
+    // no hint as to why.
+    #[cfg(all(desktop, not(debug_assertions)))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Some(path) = pdf_path_from_args(&argv) {

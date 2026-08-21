@@ -276,11 +276,11 @@ fn serve_page(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Ve
         Ok(png) => {
             log::info!("page {index} rendered at {dpi} dpi: {} bytes", png.len());
             Response::builder()
-            .status(StatusCode::OK)
-            .header("Content-Type", "image/png")
-            // Every edit changes the URL, so a rendered page is immutable.
-            .header("Cache-Control", "public, max-age=31536000, immutable")
-            .header("Access-Control-Allow-Origin", "*")
+                .status(StatusCode::OK)
+                .header("Content-Type", "image/png")
+                // Every edit changes the URL, so a rendered page is immutable.
+                .header("Cache-Control", "public, max-age=31536000, immutable")
+                .header("Access-Control-Allow-Origin", "*")
                 .body(png)
                 .unwrap_or_else(|_| {
                     error_response(StatusCode::INTERNAL_SERVER_ERROR, "encode failed")
@@ -321,8 +321,12 @@ mod tests {
     fn finds_a_real_pdf_argument() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("Report.PDF");
-        std::fs::write(&path, b"%PDF-1.7
-").expect("write");
+        std::fs::write(
+            &path,
+            b"%PDF-1.7
+",
+        )
+        .expect("write");
 
         let args = vec![
             "nxtpdf.exe".to_string(),
@@ -333,7 +337,6 @@ mod tests {
         // The extension match is case-insensitive, as Explorer paths vary.
         assert_eq!(pdf_path_from_args(&args), Some(path));
     }
-
 
     #[test]
     fn parses_a_well_formed_page_url() {

@@ -191,7 +191,9 @@ fn appearance_string(doc: &Document, field_id: ObjectId) -> Option<String> {
     let object = field_attr(doc, field_id, b"DA").or_else(|| {
         // Fall back to the form-wide default when the field declares none.
         let form = acro_form_dict(doc)?;
-        form.get(b"DA").ok().map(|value| resolve(doc, value).clone())
+        form.get(b"DA")
+            .ok()
+            .map(|value| resolve(doc, value).clone())
     })?;
 
     match object {
@@ -238,7 +240,8 @@ pub fn set_field_font_size(doc: &mut Document, name: &str, size: f32) -> AppResu
         ));
     }
 
-    let field_id = find_field(doc, name).ok_or_else(|| AppError::FieldNotFound(name.to_string()))?;
+    let field_id =
+        find_field(doc, name).ok_or_else(|| AppError::FieldNotFound(name.to_string()))?;
     let updated = appearance_with_size(appearance_string(doc, field_id).as_deref(), size);
 
     // Write it on the field and on every widget, since either may carry /DA.
@@ -1011,10 +1014,14 @@ pub fn set_field_rect(doc: &mut Document, name: &str, rect: [f32; 4]) -> AppResu
         ));
     }
 
-    let field_id = find_field(doc, name).ok_or_else(|| AppError::FieldNotFound(name.to_string()))?;
-    let widget_id = field_widgets(doc, field_id).first().copied().ok_or_else(|| {
-        AppError::InvalidInput(format!("Field \"{name}\" has no widget to move."))
-    })?;
+    let field_id =
+        find_field(doc, name).ok_or_else(|| AppError::FieldNotFound(name.to_string()))?;
+    let widget_id = field_widgets(doc, field_id)
+        .first()
+        .copied()
+        .ok_or_else(|| {
+            AppError::InvalidInput(format!("Field \"{name}\" has no widget to move."))
+        })?;
 
     let dict = doc
         .get_object_mut(widget_id)
@@ -1050,7 +1057,8 @@ pub fn rename_field(doc: &mut Document, name: &str, new_partial_name: &str) -> A
         ));
     }
 
-    let field_id = find_field(doc, name).ok_or_else(|| AppError::FieldNotFound(name.to_string()))?;
+    let field_id =
+        find_field(doc, name).ok_or_else(|| AppError::FieldNotFound(name.to_string()))?;
 
     // Preserve any parent prefix when checking for a collision.
     let qualified = match name.rsplit_once('.') {
@@ -1334,7 +1342,10 @@ mod tests {
 
     #[test]
     fn zero_means_auto_size() {
-        assert_eq!(appearance_with_size(Some("/Helv 12 Tf 0 g"), 0.0), "/Helv 0 Tf 0 g");
+        assert_eq!(
+            appearance_with_size(Some("/Helv 12 Tf 0 g"), 0.0),
+            "/Helv 0 Tf 0 g"
+        );
     }
 
     #[test]

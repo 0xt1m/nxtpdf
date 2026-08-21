@@ -95,10 +95,7 @@ pub fn close_document(
 }
 
 #[tauri::command]
-pub fn activate_document(
-    state: State<'_, AppState>,
-    id: DocumentId,
-) -> AppResult<DocumentInfo> {
+pub fn activate_document(state: State<'_, AppState>, id: DocumentId) -> AppResult<DocumentInfo> {
     let mut workspace = state.workspace.lock();
     if !workspace.activate(id) {
         return Err(AppError::NoDocument);
@@ -112,7 +109,10 @@ pub fn activate_document(
 #[tauri::command]
 pub fn list_documents(state: State<'_, AppState>) -> AppResult<Vec<DocumentInfo>> {
     let mut workspace = state.workspace.lock();
-    Ok(workspace.iter_mut().map(|session| snapshot(session)).collect())
+    Ok(workspace
+        .iter_mut()
+        .map(|session| snapshot(session))
+        .collect())
 }
 
 #[tauri::command]

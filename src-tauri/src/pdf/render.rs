@@ -51,10 +51,7 @@ pub struct PageRaster {
 /// This is the only place a `PdfDocument` is created, so the lock cannot be
 /// bypassed by accident. It is not reentrant — never call a public function
 /// from this module inside `f`.
-fn with_pdfium<T>(
-    bytes: &[u8],
-    f: impl FnOnce(&PdfDocument<'_>) -> AppResult<T>,
-) -> AppResult<T> {
+fn with_pdfium<T>(bytes: &[u8], f: impl FnOnce(&PdfDocument<'_>) -> AppResult<T>) -> AppResult<T> {
     let _guard = RENDER_LOCK.lock();
 
     let document = pdfium()?

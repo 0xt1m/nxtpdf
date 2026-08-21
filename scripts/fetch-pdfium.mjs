@@ -13,7 +13,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, renameSync, readdirSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -102,7 +102,11 @@ async function main() {
       throw new Error(`Archive did not contain ${target.libName}`);
     }
 
-    renameSync(extracted, destination);
+    // Copy rather than rename: the temp directory and the checkout can live on
+    // different drives — they do on a GitHub Windows runner, where TEMP is on
+    // C: and the workspace on D: — and rename across filesystems fails with
+    // EXDEV. The temp directory is removed below either way.
+    copyFileSync(extracted, destination);
     const sizeMb = (statSync(destination).size / 1024 / 1024).toFixed(1);
     log(`Installed ${target.libName} (${sizeMb} MB) -> src-tauri/lib/`);
   } finally {

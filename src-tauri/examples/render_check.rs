@@ -48,8 +48,10 @@ fn from_files(first: &str, rest: &[String]) {
     // Append each remaining file in turn, re-probing after every one so a
     // failure is attributed to the file that caused it.
     for path in rest {
-        println!("
---- append {path} ---");
+        println!(
+            "
+--- append {path} ---"
+        );
         let extra = match document::open(std::path::Path::new(path)) {
             Ok(extra) => extra,
             Err(error) => {

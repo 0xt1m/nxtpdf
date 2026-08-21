@@ -352,10 +352,7 @@ mod tests {
     #[test]
     fn a_path_already_open_is_found() {
         let (workspace, ids) = workspace_with(2);
-        assert_eq!(
-            workspace.find_by_path(Path::new("doc0.pdf")),
-            Some(ids[0])
-        );
+        assert_eq!(workspace.find_by_path(Path::new("doc0.pdf")), Some(ids[0]));
         assert_eq!(workspace.find_by_path(Path::new("nope.pdf")), None);
     }
 

@@ -66,8 +66,16 @@ default = []
 # slow in a debug build to be usable, but our own crate stays fast to compile.
 incremental = true
 
+# Full debug info for a 450-crate dependency tree is the single biggest cost in
+# a dev build — most of the link time and most of the disk. Line tables keep
+# backtraces with file and line numbers, which is what is actually used day to
+# day; set this back to `true` if you need to step through in a debugger.
+debug = "line-tables-only"
+
+# Dependencies are never stepped through, so they need no debug info at all.
 [profile.dev.package."*"]
 opt-level = 2
+debug = false
 
 [profile.release]
 opt-level = "s"

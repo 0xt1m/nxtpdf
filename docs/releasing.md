@@ -87,6 +87,48 @@ The workflow in `.github/workflows/release.yml` builds, signs, generates
 `latest.json`, and opens a **draft** release. Review the assets, then publish
 it — the updater only sees releases marked latest.
 
+### Watching the build
+
+The run takes roughly 10–15 minutes: a release build compiles the whole
+dependency tree with LTO, which is deliberately slower than a dev build.
+
+In the browser: <https://github.com/0xt1m/nxtpdf/actions>
+
+From the terminal, after a one-time `gh auth login`:
+
+```bash
+gh run watch                     # live progress of the newest run
+gh run list --limit 5            # recent runs and their status
+gh run view --log-failed         # only the failing step's log
+```
+
+### Publishing it
+
+The workflow opens the release as a **draft**, so nothing reaches users until
+you say so — worth keeping, since publishing pushes the update to everyone
+running the app.
+
+```bash
+gh release edit v1.0.0 --draft=false --latest
+```
+
+Or in the browser: **Releases → the draft → Edit → tick "Set as the latest
+release" → Publish release**.
+
+`--latest` is not optional. The updater fetches
+`/releases/latest/download/latest.json`, and that path only resolves to the
+release GitHub considers latest. A published release that is not marked latest
+is invisible to the updater.
+
+Confirm it worked:
+
+```bash
+curl -sL https://github.com/0xt1m/nxtpdf/releases/latest/download/latest.json
+```
+
+That should print the manifest with the new version number. If it 404s, the
+release is still a draft or is not marked latest.
+
 ### Building locally instead
 
 Only needed to test an installer before tagging.
@@ -143,12 +185,6 @@ elevation, which cannot be granted silently while the app is closing.
 - `version` has no `v` prefix.
 - `signature` is the whole `.sig` file contents, one long base64 line.
 - `notes` is shown to the user, so write it for them.
-
-### 4. Publish
-
-Upload the setup `.exe` and `latest.json` to the release. With GitHub Releases,
-tag it `v0.2.0` and mark it **latest** so the
-`/releases/latest/download/latest.json` URL resolves.
 
 ### 5. Verify before announcing
 

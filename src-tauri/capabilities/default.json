@@ -16,6 +16,9 @@
     "dialog:allow-confirm",
     "opener:allow-open-path",
     "opener:allow-open-url",
-    "log:default"
+    "log:default",
+    "updater:default",
+    "process:allow-exit",
+    "process:allow-restart"
   ]
 }

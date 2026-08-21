@@ -79,6 +79,16 @@ pub fn run() {
             commands::print_document,
         ])
         .setup(|app| {
+            // Updating is a desktop concept; the plugins do not build for
+            // mobile targets, so they are registered here behind a cfg rather
+            // than in the builder chain above.
+            #[cfg(desktop)]
+            {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_process::init())?;
+            }
+
             let resource_dir = app.path().resource_dir().ok();
 
             if let Err(message) = state::init_pdfium(resource_dir.as_deref()) {

@@ -10,6 +10,9 @@ Tauri 2 + React 19 + TypeScript on the front, Rust on the back.
 - **Reorganize** — rotate, delete, drag-to-reorder, append another PDF, extract pages to a new file.
 - **Fill forms** — read and write existing AcroForm fields: text, checkboxes, radios, dropdowns.
 - **Build forms** — drag a rectangle on the page to place a text field, checkbox, or dropdown.
+- **Update itself** — checks on launch, downloads in the background, and
+  installs silently when you close the app. A banner offers **Update now** if
+  you would rather not wait. See [docs/releasing.md](docs/releasing.md).
 - **Print properly** — choose the **tray**, one- or two-sided (long or short edge), **color or black and white**, paper size, orientation, copies, collation, page range, and scaling. Every option is read from the driver, so you only see what your printer can actually do.
 
 ## What it does not do
@@ -55,6 +58,9 @@ binary is ~7 MB and is deliberately **not** committed. Re-run it by hand with
 | `pnpm rs:test`              | `cargo test`                                                          |
 | `pnpm check`                | Everything above — run before pushing                                 |
 | `pnpm setup:pdfium`         | Re-download the PDFium library                                        |
+
+Releases must be signed or the auto-updater will reject them — see
+[docs/releasing.md](docs/releasing.md) before cutting one.
 
 ### Diagnosing a printer
 

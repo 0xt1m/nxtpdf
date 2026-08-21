@@ -36,6 +36,11 @@ desktop.ini
 *.snk
 signing/
 
+# Tauri update signing keys. The real one lives in ~/.tauri/ and must never be
+# committed: losing control of it means anyone can ship an "update" to users.
+*.key
+!*.key.pub
+
 # ---- Logs & scratch ----
 *.log
 npm-debug.log*

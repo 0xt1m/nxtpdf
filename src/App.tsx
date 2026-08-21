@@ -7,7 +7,9 @@ import { FieldsPanel } from '@/components/FieldsPanel';
 import { DesignPanel, EMPTY_DRAFT, type DraftField } from '@/components/DesignPanel';
 import { PrintDialog } from '@/components/PrintDialog';
 import { StatusBar } from '@/components/StatusBar';
+import { UpdateBanner } from '@/components/UpdateBanner';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useAppUpdater } from '@/hooks/useAppUpdater';
 import { useStore, type SidePanel } from '@/state/store';
 import type { FieldKind, NewField } from '@/lib/types';
 
@@ -31,6 +33,7 @@ export default function App() {
   const [drawKind, setDrawKind] = useState<FieldKind | null>(null);
 
   useKeyboardShortcuts();
+  const updater = useAppUpdater();
 
   // Pick up a document that survived a webview reload during development.
   useEffect(() => {
@@ -88,6 +91,7 @@ export default function App() {
   return (
     <div className="app">
       <Toolbar onPrint={() => setPrintOpen(true)} />
+      <UpdateBanner updater={updater} />
 
       <div className="app__body">
         {doc && <PageSidebar />}

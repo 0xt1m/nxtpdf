@@ -72,6 +72,14 @@ export function nextFieldName(kind: AddableKind, taken: string[]): string {
  */
 export type Focus = 'pages' | 'fields' | null;
 
+/**
+ * How the print dialog opens.
+ *
+ * Ctrl+P prints the whole document; Ctrl+Shift+P starts from whatever pages
+ * are selected, so "print just these" is one gesture rather than four clicks.
+ */
+export type PrintPreset = 'all' | 'selected';
+
 interface AppState {
   // --- Document ---
   doc: DocumentInfo | null;
@@ -89,6 +97,8 @@ interface AppState {
   notice: string | null;
   /** Lives here rather than in App so Ctrl+P can open it. */
   printDialogOpen: boolean;
+  /** Which page choice the dialog should start on. */
+  printPreset: PrintPreset;
   /** Cleared if the backend reports PDFium failed to load at startup. */
   renderingAvailable: boolean;
   /**
@@ -105,7 +115,8 @@ interface AppState {
   setNotice: (message: string | null) => void;
   setRenderingAvailable: (available: boolean) => void;
   setPanel: (panel: SidePanel) => void;
-  setPrintDialogOpen: (open: boolean) => void;
+  openPrintDialog: (preset?: PrintPreset) => void;
+  closePrintDialog: () => void;
   setZoom: (zoom: number) => void;
   nudgeZoom: (delta: number) => void;
   setCurrentPage: (index: number) => void;
@@ -249,6 +260,7 @@ export const useStore = create<AppState>((set, get) => {
     error: null,
     notice: null,
     printDialogOpen: false,
+    printPreset: 'all',
     renderingAvailable: true,
     clipboard: [],
 
@@ -256,7 +268,14 @@ export const useStore = create<AppState>((set, get) => {
     setNotice: (message) => set({ notice: message }),
     setRenderingAvailable: (available) => set({ renderingAvailable: available }),
     setPanel: (panel) => set({ panel }),
-    setPrintDialogOpen: (open) => set({ printDialogOpen: open }),
+    openPrintDialog: (preset = 'all') => {
+      // Asking for the selection when nothing is selected would open a dialog
+      // that cannot print anything, so fall back to the whole document.
+      const usable = preset === 'selected' && get().selectedPages.length > 0;
+      set({ printDialogOpen: true, printPreset: usable ? 'selected' : 'all' });
+    },
+
+    closePrintDialog: () => set({ printDialogOpen: false }),
 
     setZoom: (zoom) => set({ zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom)) }),
 

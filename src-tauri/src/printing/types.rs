@@ -22,6 +22,9 @@ pub struct PrinterInfo {
     pub comment: String,
     /// Jobs currently queued on the device.
     pub jobs_queued: u32,
+    /// True when this is a software device rather than real hardware — a PDF
+    /// or XPS writer, a fax, or anything that discards its output.
+    pub is_virtual: bool,
 }
 
 /// An input tray. `id` is the driver's own bin identifier and must be passed

@@ -213,6 +213,37 @@ pub fn delete_form_field(state: State<'_, AppState>, name: String) -> AppResult<
 }
 
 // ---------------------------------------------------------------------------
+// Windows integration
+// ---------------------------------------------------------------------------
+
+/// Opens the Windows "Default apps" settings page.
+///
+/// Since Windows 10, an application cannot make itself the default handler for
+/// a file type — that would let any installer hijack every extension. The
+/// association is registered by the installer, but the *choice* has to be made
+/// by the user in Settings, so the most an app can do is take them there.
+#[tauri::command]
+pub fn open_default_apps_settings() -> AppResult<()> {
+    #[cfg(windows)]
+    {
+        // The empty string is `start`'s title argument; without it a quoted
+        // target would be treated as the window title and never launched.
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", "ms-settings:defaultapps"])
+            .spawn()
+            .map_err(|error| {
+                AppError::InvalidInput(format!("Could not open Windows Settings: {error}"))
+            })?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    Err(AppError::InvalidInput(
+        "Default-app settings are only available on Windows.".into(),
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Printing
 // ---------------------------------------------------------------------------
 

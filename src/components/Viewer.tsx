@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useStore } from '@/state/store';
 import { pageImageUrl, VIEWER_DPI } from '@/lib/pageImage';
 import {
@@ -186,7 +187,8 @@ export function Viewer() {
           onClick={() => setCurrentPage(currentPage - 1)}
           disabled={currentPage === 0}
         >
-          ‹ Prev
+          <ChevronLeft size={15} />
+          Prev
         </button>
         <span>
           Page {currentPage + 1} of {doc.pageCount}
@@ -195,7 +197,8 @@ export function Viewer() {
           onClick={() => setCurrentPage(currentPage + 1)}
           disabled={currentPage >= doc.pageCount - 1}
         >
-          Next ›
+          Next
+          <ChevronRight size={15} />
         </button>
       </nav>
     </main>

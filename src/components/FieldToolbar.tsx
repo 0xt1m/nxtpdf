@@ -1,3 +1,4 @@
+import { ChevronDown, SquareCheck, Type } from 'lucide-react';
 import { useStore, type AddableKind } from '@/state/store';
 
 /**
@@ -8,10 +9,15 @@ import { useStore, type AddableKind } from '@/state/store';
  * clicks do not land on top of each other, and each one can be dragged
  * wherever it belongs.
  */
-const TOOLS: { kind: AddableKind; label: string; glyph: string; hint: string }[] = [
-  { kind: 'text', label: 'Text', glyph: 'I', hint: 'Add a text field' },
-  { kind: 'checkbox', label: 'Checkbox', glyph: '☑', hint: 'Add a checkbox' },
-  { kind: 'choice', label: 'Dropdown', glyph: '▾', hint: 'Add a dropdown' },
+const TOOLS: {
+  kind: AddableKind;
+  label: string;
+  Icon: typeof Type;
+  hint: string;
+}[] = [
+  { kind: 'text', label: 'Text', Icon: Type, hint: 'Add a text field' },
+  { kind: 'checkbox', label: 'Checkbox', Icon: SquareCheck, hint: 'Add a checkbox' },
+  { kind: 'choice', label: 'Dropdown', Icon: ChevronDown, hint: 'Add a dropdown' },
 ];
 
 export function FieldToolbar() {
@@ -26,18 +32,16 @@ export function FieldToolbar() {
     <div className="field-toolbar">
       <span className="field-toolbar__label">Add to page {currentPage + 1}</span>
 
-      {TOOLS.map((tool) => (
+      {TOOLS.map(({ kind, label, Icon, hint }) => (
         <button
-          key={tool.kind}
+          key={kind}
           className="field-toolbar__button"
           disabled={busy}
-          title={tool.hint}
-          onClick={() => void addField(tool.kind)}
+          title={hint}
+          onClick={() => void addField(kind)}
         >
-          <span className="field-toolbar__glyph" aria-hidden="true">
-            {tool.glyph}
-          </span>
-          {tool.label}
+          <Icon size={15} />
+          {label}
         </button>
       ))}
 

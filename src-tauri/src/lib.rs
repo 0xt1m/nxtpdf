@@ -29,7 +29,27 @@ const PAGE_SCHEME: &str = "nxtpdf";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // Registered first, as Tauri requires. Double-clicking a PDF while NXTPDF
+    // is already running would otherwise start a second copy, each with its
+    // own document; instead the path is handed to the window already open.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(path) = pdf_path_from_args(&argv) {
+                open_in_app(app, &path);
+            }
+
+            // Bring the existing window forward — the user just asked for it.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    builder
         // Without a logger installed, every `log::` call in this crate is
         // silently discarded — including the ones that report why PDFium or a
         // page render failed. Install it first so startup errors are visible.
@@ -76,6 +96,7 @@ pub fn run() {
             commands::set_form_field_font_size,
             commands::rename_form_field,
             commands::delete_form_field,
+            commands::open_default_apps_settings,
             commands::list_printers,
             commands::default_printer,
             commands::printer_capabilities,
@@ -143,10 +164,50 @@ pub fn run() {
                 }
             }
 
+            // A PDF double-clicked in Explorer arrives as an argument.
+            if let Some(path) = pdf_path_from_args(&std::env::args().collect::<Vec<_>>()) {
+                open_in_app(app.handle(), &path);
+            }
+
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running NXTPDF");
+}
+
+/// Picks a PDF path out of a command line.
+///
+/// Explorer passes the file as the first argument, but a dev run adds flags of
+/// its own, so scan for something that looks like a PDF rather than trusting
+/// `argv[1]`.
+fn pdf_path_from_args(args: &[String]) -> Option<std::path::PathBuf> {
+    args.iter()
+        .skip(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .map(std::path::PathBuf::from)
+        .find(|path| {
+            path.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+                && path.is_file()
+        })
+}
+
+/// Opens a document into the shared session and tells the UI to refresh.
+fn open_in_app(app: &tauri::AppHandle, path: &std::path::Path) {
+    match pdf::document::open(path) {
+        Ok(document) => {
+            let state = app.state::<AppState>();
+            *state.session.lock() = Some(state::DocumentSession::new(
+                document,
+                Some(path.to_path_buf()),
+            ));
+            log::info!("opened {} from the command line", path.display());
+
+            // The frontend owns a snapshot, so it has to be told to re-read.
+            let _ = app.emit("document-changed", ());
+        }
+        Err(error) => log::error!("could not open {}: {error}", path.display()),
+    }
 }
 
 /// Parses `page/{index}/{dpi}/{revision}` out of a page-scheme request.
@@ -223,7 +284,44 @@ fn serve_page(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Ve
 
 #[cfg(test)]
 mod tests {
-    use super::parse_page_request;
+    use super::{parse_page_request, pdf_path_from_args};
+
+    #[test]
+    fn ignores_the_executable_and_flags() {
+        // Nothing here is an existing .pdf, so nothing should be picked up.
+        let args: Vec<String> = ["nxtpdf.exe", "--flag", "-v"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(pdf_path_from_args(&args), None);
+    }
+
+    #[test]
+    fn ignores_paths_that_are_not_pdfs() {
+        let args: Vec<String> = ["nxtpdf.exe", "notes.txt"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(pdf_path_from_args(&args), None);
+    }
+
+    #[test]
+    fn finds_a_real_pdf_argument() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("Report.PDF");
+        std::fs::write(&path, b"%PDF-1.7
+").expect("write");
+
+        let args = vec![
+            "nxtpdf.exe".to_string(),
+            "--some-flag".to_string(),
+            path.to_string_lossy().into_owned(),
+        ];
+
+        // The extension match is case-insensitive, as Explorer paths vary.
+        assert_eq!(pdf_path_from_args(&args), Some(path));
+    }
+
 
     #[test]
     fn parses_a_well_formed_page_url() {

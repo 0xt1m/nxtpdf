@@ -54,7 +54,18 @@
         "installMode": "currentUser"
       }
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "fileAssociations": [
+      {
+        "ext": [
+          "pdf"
+        ],
+        "name": "PDF Document",
+        "description": "Portable Document Format",
+        "role": "Editor",
+        "mimeType": "application/pdf"
+      }
+    ]
   },
   "plugins": {
     "updater": {

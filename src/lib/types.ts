@@ -102,6 +102,8 @@ export interface PrinterInfo {
   location: string;
   comment: string;
   jobsQueued: number;
+  /** A software device — PDF/XPS writer, fax — rather than real hardware. */
+  isVirtual: boolean;
 }
 
 export interface PaperSource {

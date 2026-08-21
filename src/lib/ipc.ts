@@ -95,6 +95,12 @@ export const printDocument = (settings: PrintSettings) =>
   invoke<PrintJobResult>('print_document', { settings });
 
 // ---------------------------------------------------------------------------
+// Windows integration
+// ---------------------------------------------------------------------------
+
+export const openDefaultAppsSettings = () => invoke<void>('open_default_apps_settings');
+
+// ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
 

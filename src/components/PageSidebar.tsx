@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { RotateCcw, RotateCw, Trash2 } from 'lucide-react';
 import { useStore, type SelectionModifiers } from '@/state/store';
 import { pageImageUrl, THUMBNAIL_DPI } from '@/lib/pageImage';
 import type { PageInfo } from '@/lib/types';
@@ -69,6 +70,7 @@ export function PageSidebar() {
                 : 'Delete selected pages (Del)'
             }
           >
+            <Trash2 size={13} />
             Delete
           </button>
         </div>
@@ -194,23 +196,25 @@ function Thumbnail({
       <div className="thumbnail__actions">
         <button
           title="Rotate left"
+          aria-label="Rotate left"
           disabled={busy}
           onClick={(event) => {
             event.stopPropagation();
             onRotate(-90);
           }}
         >
-          ⟲
+          <RotateCcw size={13} />
         </button>
         <button
           title="Rotate right"
+          aria-label="Rotate right"
           disabled={busy}
           onClick={(event) => {
             event.stopPropagation();
             onRotate(90);
           }}
         >
-          ⟳
+          <RotateCw size={13} />
         </button>
       </div>
     </li>

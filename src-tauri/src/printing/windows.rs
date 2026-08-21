@@ -166,6 +166,34 @@ fn decode_status(status: u32, jobs: u32) -> String {
     }
 }
 
+/// Whether a device is a software printer rather than real hardware.
+///
+/// Classified by **port**, not by name: names are localized and vendor
+/// specific, while the port a driver binds to is neither. A machine typically
+/// carries several of these — Print to PDF, XPS, Fax, OneNote — and none of
+/// them can put ink on paper.
+///
+/// * `nul:`         output is discarded
+/// * `PORTPROMPT:`  asks for a filename, i.e. writes a file
+/// * `SHRFAX:`      the Windows fax driver
+/// * `FILE:`        writes to a file
+/// * `...*.ext`     a file pattern, as Adobe PDF uses
+///
+/// Anything else — an IP address, `USB001`, `LPT1`, a WSD endpoint, a UNC
+/// share — is treated as physical.
+fn is_virtual_port(port: &str) -> bool {
+    let port = port.trim();
+    let lowered = port.to_ascii_lowercase();
+
+    const VIRTUAL_PORTS: [&str; 4] = ["nul:", "portprompt:", "shrfax:", "file:"];
+    if VIRTUAL_PORTS.contains(&lowered.as_str()) {
+        return true;
+    }
+
+    // A wildcard means the driver writes files rather than printing.
+    port.contains('*')
+}
+
 pub fn list_printers() -> AppResult<Vec<PrinterInfo>> {
     let flags: u32 = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS;
     let default = default_printer_name();
@@ -200,10 +228,12 @@ pub fn list_printers() -> AppResult<Vec<PrinterInfo>> {
             .iter()
             .map(|entry| {
                 let name = from_pwstr(entry.pPrinterName);
+                let port = from_pwstr(entry.pPortName);
                 PrinterInfo {
                     is_default: default.as_deref() == Some(name.as_str()),
                     driver: from_pwstr(entry.pDriverName),
-                    port: from_pwstr(entry.pPortName),
+                    is_virtual: is_virtual_port(&port),
+                    port,
                     status: decode_status(entry.Status, entry.cJobs),
                     location: from_pwstr(entry.pLocation),
                     comment: from_pwstr(entry.pComment),
@@ -941,6 +971,31 @@ mod tests {
         let mut pixels = vec![1u8, 2, 3, 4];
         rgba_to_bgra(&mut pixels);
         assert_eq!(pixels, vec![3, 2, 1, 4]);
+    }
+
+    #[test]
+    fn virtual_ports_are_recognized() {
+        // The five software devices a stock Windows box tends to carry.
+        assert!(is_virtual_port("nul:")); // OneNote
+        assert!(is_virtual_port("PORTPROMPT:")); // Print to PDF, XPS Writer
+        assert!(is_virtual_port("SHRFAX:")); // Fax
+        assert!(is_virtual_port("FILE:"));
+        assert!(is_virtual_port(r"Documents\*.pdf")); // Adobe PDF
+    }
+
+    #[test]
+    fn real_ports_are_left_alone() {
+        assert!(!is_virtual_port("192.168.12.16"));
+        assert!(!is_virtual_port("USB001"));
+        assert!(!is_virtual_port("LPT1:"));
+        assert!(!is_virtual_port(r"\\server\laserjet"));
+        assert!(!is_virtual_port("WSD-a1b2c3d4"));
+    }
+
+    #[test]
+    fn port_matching_ignores_case_and_padding() {
+        assert!(is_virtual_port("  NUL:  "));
+        assert!(is_virtual_port("PortPrompt:"));
     }
 
     #[test]

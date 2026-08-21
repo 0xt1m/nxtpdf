@@ -1,3 +1,14 @@
+import {
+  FilePlus2,
+  FolderOpen,
+  Save,
+  SaveAll,
+  FileInput,
+  FileOutput,
+  Minus,
+  Plus,
+  Printer,
+} from 'lucide-react';
 import { useStore, MIN_ZOOM, MAX_ZOOM } from '@/state/store';
 import {
   appendDocument,
@@ -6,6 +17,9 @@ import {
   saveDocument,
   saveDocumentAs,
 } from '@/lib/fileActions';
+
+/** Icons are sized once here so every button lines up. */
+const ICON = 15;
 
 interface ToolbarProps {
   onPrint: () => void;
@@ -31,33 +45,43 @@ export function Toolbar({ onPrint }: ToolbarProps) {
       </div>
 
       <div className="toolbar__group">
-        <button onClick={newDocument} disabled={busy}>
+        <button onClick={newDocument} disabled={busy} title="New document">
+          <FilePlus2 size={ICON} />
           New
         </button>
-        <button onClick={() => void openDocument()} disabled={busy} title="Ctrl+O">
-          Open…
+        <button onClick={() => void openDocument()} disabled={busy} title="Open (Ctrl+O)">
+          <FolderOpen size={ICON} />
+          Open
         </button>
         <button
           onClick={() => void saveDocument()}
           disabled={!hasDoc || busy}
-          title="Ctrl+S"
+          title="Save (Ctrl+S)"
         >
+          <Save size={ICON} />
           Save
         </button>
         <button
+          className="button--icon"
           onClick={() => void saveDocumentAs()}
           disabled={!hasDoc || busy}
-          title="Ctrl+Shift+S"
+          title="Save As (Ctrl+Shift+S)"
+          aria-label="Save As"
         >
-          Save As…
+          <SaveAll size={ICON} />
         </button>
       </div>
 
       <div className="toolbar__divider" />
 
       <div className="toolbar__group">
-        <button onClick={() => void appendDocument()} disabled={!hasDoc || busy}>
-          Append PDF…
+        <button
+          onClick={() => void appendDocument()}
+          disabled={!hasDoc || busy}
+          title="Append the pages of another PDF"
+        >
+          <FileInput size={ICON} />
+          Append
         </button>
         <button
           onClick={() => void extractSelection()}
@@ -68,7 +92,8 @@ export function Toolbar({ onPrint }: ToolbarProps) {
               : `Export ${selectedPages.length} selected page(s)`
           }
         >
-          Extract…
+          <FileOutput size={ICON} />
+          Extract
         </button>
       </div>
 
@@ -78,39 +103,40 @@ export function Toolbar({ onPrint }: ToolbarProps) {
         <button
           onClick={() => nudgeZoom(-0.2)}
           disabled={!hasDoc || zoom <= MIN_ZOOM}
-          title="Ctrl+− or Ctrl+scroll"
+          title="Zoom out (Ctrl+− or Ctrl+scroll)"
+          aria-label="Zoom out"
         >
-          −
+          <Minus size={14} />
         </button>
-        <span className="toolbar__zoom-label">{Math.round(zoom * 100)}%</span>
+        <button
+          className="toolbar__zoom-label"
+          onClick={() => setZoom(1)}
+          disabled={!hasDoc}
+          title="Reset zoom (Ctrl+0)"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
         <button
           onClick={() => nudgeZoom(0.2)}
           disabled={!hasDoc || zoom >= MAX_ZOOM}
-          title="Ctrl++ or Ctrl+scroll"
+          title="Zoom in (Ctrl++ or Ctrl+scroll)"
+          aria-label="Zoom in"
         >
-          +
-        </button>
-        <button
-          onClick={() => setZoom(1)}
-          disabled={!hasDoc || zoom === 1}
-          title="Ctrl+0"
-        >
-          Reset
+          <Plus size={14} />
         </button>
       </div>
 
       <div className="toolbar__spacer" />
 
-      <div className="toolbar__group">
-        <button
-          className="button--primary"
-          onClick={onPrint}
-          disabled={!hasDoc || busy}
-          title="Ctrl+P"
-        >
-          Print…
-        </button>
-      </div>
+      <button
+        className="button--primary"
+        onClick={onPrint}
+        disabled={!hasDoc || busy}
+        title="Print (Ctrl+P)"
+      >
+        <Printer size={ICON} />
+        Print
+      </button>
     </header>
   );
 }

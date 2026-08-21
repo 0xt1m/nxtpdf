@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { X } from 'lucide-react';
 import { useStore } from '@/state/store';
 
 /** Auto-dismiss transient success messages after this long. */
@@ -39,7 +40,7 @@ export function StatusBar() {
         <span className="status-bar__error">
           {error}
           <button onClick={() => setError(null)} aria-label="Dismiss error">
-            ×
+            <X size={13} />
           </button>
         </span>
       )}

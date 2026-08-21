@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Printer, X } from 'lucide-react';
 import * as ipc from '@/lib/ipc';
 import { useStore } from '@/state/store';
 import type {
@@ -27,8 +28,10 @@ interface PrintDialogProps {
 export function PrintDialog({ onClose }: PrintDialogProps) {
   const doc = useStore((s) => s.doc);
   const selectedPages = useStore((s) => s.selectedPages);
+  const printPreset = useStore((s) => s.printPreset);
 
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
+  const [showVirtual, setShowVirtual] = useState(false);
   const [caps, setCaps] = useState<PrinterCapabilities | null>(null);
   const [printerName, setPrinterName] = useState('');
   const [loading, setLoading] = useState(true);
@@ -46,12 +49,14 @@ export function PrintDialog({ onClose }: PrintDialogProps) {
   const [orientation, setOrientation] = useState<Orientation>('auto');
   const [scaling, setScaling] = useState<PageScaling>('fitToPage');
   const [reverseOrder, setReverseOrder] = useState(false);
+  // Ctrl+Shift+P opens straight onto the selection; Ctrl+P and the toolbar
+  // button open on the whole document.
   const [rangeMode, setRangeMode] = useState<'all' | 'selected' | 'custom'>(
-    selectedPages.length > 0 ? 'selected' : 'all'
+    printPreset === 'selected' && selectedPages.length > 0 ? 'selected' : 'all'
   );
   const [customRange, setCustomRange] = useState('');
 
-  // Load the printer list once, then select the system default.
+  // Load the printer list once, then select a sensible default.
   useEffect(() => {
     let cancelled = false;
 
@@ -61,9 +66,19 @@ export function PrintDialog({ onClose }: PrintDialogProps) {
         if (cancelled) return;
         setPrinters(list);
 
-        const preferred = list.find((p) => p.isDefault) ?? list[0];
+        // Prefer real hardware. A stock Windows install carries several
+        // software devices — Print to PDF, XPS, Fax, OneNote — and one of
+        // them is often the system default, which is rarely what someone
+        // opening a print dialog actually wants.
+        const real = list.filter((printer) => !printer.isVirtual);
+        const pool = real.length > 0 ? real : list;
+
+        const preferred = pool.find((printer) => printer.isDefault) ?? pool[0];
         if (preferred) setPrinterName(preferred.name);
         else setError('No printers were found on this system.');
+
+        // Nothing physical attached: show everything rather than an empty list.
+        if (real.length === 0) setShowVirtual(true);
       } catch (err) {
         if (!cancelled) setError(ipc.errorMessage(err));
       } finally {
@@ -153,7 +168,11 @@ export function PrintDialog({ onClose }: PrintDialogProps) {
     }
   }
 
-  const selectedPrinter = printers.find((p) => p.name === printerName);
+  const selectedPrinter = printers.find((printer) => printer.name === printerName);
+  const virtualCount = printers.filter((printer) => printer.isVirtual).length;
+  const visiblePrinters = showVirtual
+    ? printers
+    : printers.filter((printer) => !printer.isVirtual);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -167,7 +186,7 @@ export function PrintDialog({ onClose }: PrintDialogProps) {
         <header className="modal__header">
           <h2>Print</h2>
           <button className="modal__close" onClick={onClose} aria-label="Close">
-            ×
+            <X size={16} />
           </button>
         </header>
 
@@ -186,9 +205,9 @@ export function PrintDialog({ onClose }: PrintDialogProps) {
                 <select
                   value={printerName}
                   onChange={(event) => setPrinterName(event.target.value)}
-                  disabled={printers.length === 0}
+                  disabled={visiblePrinters.length === 0}
                 >
-                  {printers.map((printer) => (
+                  {visiblePrinters.map((printer) => (
                     <option key={printer.name} value={printer.name}>
                       {printer.name}
                       {printer.isDefault ? ' (default)' : ''}
@@ -196,6 +215,17 @@ export function PrintDialog({ onClose }: PrintDialogProps) {
                   ))}
                 </select>
               </label>
+
+              {virtualCount > 0 && (
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={showVirtual}
+                    onChange={(event) => setShowVirtual(event.target.checked)}
+                  />
+                  <span>Show PDF, fax and other virtual devices ({virtualCount})</span>
+                </label>
+              )}
 
               {selectedPrinter && (
                 <p className="hint">
@@ -422,6 +452,7 @@ export function PrintDialog({ onClose }: PrintDialogProps) {
             onClick={handlePrint}
             disabled={submitting || loading || !printerName || rangeInvalid}
           >
+            <Printer size={15} />
             {submitting ? 'Sending…' : 'Print'}
           </button>
         </footer>

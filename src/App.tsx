@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { Fragment, useEffect } from 'react';
+import { ExternalLink } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
 import { Toolbar } from '@/components/Toolbar';
 import { PageSidebar } from '@/components/PageSidebar';
@@ -11,6 +12,25 @@ import { UpdateBanner } from '@/components/UpdateBanner';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useAppUpdater } from '@/hooks/useAppUpdater';
 import { useStore, type SidePanel } from '@/state/store';
+import * as ipc from '@/lib/ipc';
+
+const SHORTCUTS: { keys: string[]; action: string }[] = [
+  { keys: ['Ctrl', 'S'], action: 'Save' },
+  { keys: ['Ctrl', 'Shift', 'S'], action: 'Save As' },
+  { keys: ['Ctrl', 'O'], action: 'Open' },
+  { keys: ['Ctrl', 'P'], action: 'Print' },
+  { keys: ['Ctrl', 'Shift', 'P'], action: 'Print selected pages' },
+  { keys: ['Del'], action: 'Delete selected pages or fields' },
+  { keys: ['Ctrl', 'C'], action: 'Copy fields' },
+  { keys: ['Ctrl', 'V'], action: 'Paste fields' },
+  { keys: ['↑', '↓', '←', '→'], action: 'Nudge fields (Shift for 10×)' },
+  { keys: ['Ctrl', 'click'], action: 'Add to selection' },
+  { keys: ['Shift', 'click'], action: 'Select a range' },
+  { keys: ['Ctrl', 'A'], action: 'Select all pages' },
+  { keys: ['Ctrl', 'scroll'], action: 'Zoom' },
+  { keys: ['Ctrl', '0'], action: 'Reset zoom' },
+  { keys: ['Esc'], action: 'Clear selection' },
+];
 
 const PANELS: { id: SidePanel; label: string }[] = [
   { id: 'pages', label: 'Pages' },
@@ -25,7 +45,8 @@ export default function App() {
   const setRenderingAvailable = useStore((s) => s.setRenderingAvailable);
   const setError = useStore((s) => s.setError);
   const printDialogOpen = useStore((s) => s.printDialogOpen);
-  const setPrintDialogOpen = useStore((s) => s.setPrintDialogOpen);
+  const openPrintDialog = useStore((s) => s.openPrintDialog);
+  const closePrintDialog = useStore((s) => s.closePrintDialog);
 
   useKeyboardShortcuts();
   const updater = useAppUpdater();
@@ -33,6 +54,15 @@ export default function App() {
   // Pick up a document that survived a webview reload during development.
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // Explorer can hand the backend a document directly — at launch, or through
+  // the single-instance forwarder while the app is already running.
+  useEffect(() => {
+    const unlisten = listen('document-changed', () => void refresh());
+    return () => {
+      void unlisten.then((off) => off());
+    };
   }, [refresh]);
 
   // The backend emits this when PDFium could not be loaded at startup. Page
@@ -49,7 +79,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Toolbar onPrint={() => setPrintDialogOpen(true)} />
+      <Toolbar onPrint={() => openPrintDialog('all')} />
       <UpdateBanner updater={updater} />
       <FieldToolbar />
 
@@ -82,7 +112,7 @@ export default function App() {
 
       <StatusBar />
 
-      {printDialogOpen && <PrintDialog onClose={() => setPrintDialogOpen(false)} />}
+      {printDialogOpen && <PrintDialog onClose={closePrintDialog} />}
     </div>
   );
 }
@@ -115,36 +145,33 @@ function DocumentSummary() {
       </dl>
 
       <section className="shortcuts">
+        <h3>Windows</h3>
+        <button
+          className="button--outline"
+          onClick={() => void ipc.openDefaultAppsSettings().catch(() => {})}
+        >
+          <ExternalLink size={14} />
+          Set as default PDF app
+        </button>
+        <p className="hint">
+          Windows only lets you choose this yourself, so this opens Settings — find PDF
+          under “Choose defaults by file type”.
+        </p>
+      </section>
+
+      <section className="shortcuts">
         <h3>Shortcuts</h3>
         <dl>
-          <dt>Ctrl + S</dt>
-          <dd>Save</dd>
-          <dt>Ctrl + Shift + S</dt>
-          <dd>Save As</dd>
-          <dt>Ctrl + O</dt>
-          <dd>Open</dd>
-          <dt>Ctrl + P</dt>
-          <dd>Print</dd>
-          <dt>Del</dt>
-          <dd>Delete selected pages or fields</dd>
-          <dt>Ctrl + C / V</dt>
-          <dd>Copy and paste fields</dd>
-          <dt>Arrows</dt>
-          <dd>Nudge selected fields (Shift for 10×)</dd>
-          <dt>Double-click</dt>
-          <dd>Edit a field on the page</dd>
-          <dt>Ctrl + click</dt>
-          <dd>Add to selection</dd>
-          <dt>Shift + click</dt>
-          <dd>Select a range</dd>
-          <dt>Ctrl + A</dt>
-          <dd>Select all pages</dd>
-          <dt>Ctrl + scroll</dt>
-          <dd>Zoom</dd>
-          <dt>Ctrl + 0</dt>
-          <dd>Reset zoom</dd>
-          <dt>Esc</dt>
-          <dd>Clear selection</dd>
+          {SHORTCUTS.map(({ keys, action }) => (
+            <Fragment key={action}>
+              <dt>
+                {keys.map((key) => (
+                  <kbd key={key}>{key}</kbd>
+                ))}
+              </dt>
+              <dd>{action}</dd>
+            </Fragment>
+          ))}
         </dl>
       </section>
     </>

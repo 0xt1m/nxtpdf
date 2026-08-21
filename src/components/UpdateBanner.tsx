@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import type { AppUpdater } from '@/hooks/useAppUpdater';
 
 interface UpdateBannerProps {
@@ -94,7 +95,7 @@ export function UpdateBanner({ updater }: UpdateBannerProps) {
             aria-label="Dismiss"
             title="Hide until next launch"
           >
-            ×
+            <X size={14} />
           </button>
         )}
       </div>

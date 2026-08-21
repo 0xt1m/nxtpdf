@@ -1,65 +1,90 @@
 /*
  * NXTPDF styles.
  *
- * A single stylesheet, organized by region. Colors are CSS custom properties
- * so a dark theme is a matter of overriding the token block, not rewriting
- * rules. The app follows the OS preference automatically.
+ * Design approach: surfaces are separated by tone and elevation rather than by
+ * drawing a border around everything. Borders are reserved for genuine
+ * boundaries, which is most of what stops an app looking like a stack of
+ * beige boxes.
+ *
+ * Colours are CSS custom properties, so a theme is a token swap rather than a
+ * rewrite. The app follows the OS preference automatically.
  */
 
 /* ------------------------------------------------------------------ Tokens */
 
 :root {
-  --bg: #f6f7f9;
-  --bg-raised: #ffffff;
-  --bg-sunken: #eceff4;
-  --border: #dde2ea;
-  --border-strong: #bcc5d2;
+  color-scheme: light;
 
-  --text: #1a1e26;
-  --text-muted: #626b7a;
+  /* Neutrals — a slightly cool grey ramp, low chroma so content dominates. */
+  --bg: #f4f4f6;
+  --surface: #ffffff;
+  --surface-2: #f1f2f4;
+  --surface-3: #e7e9ed;
+  --border: #e3e5ea;
+  --border-strong: #cfd3db;
 
-  --accent: #2f6feb;
+  --text: #17181c;
+  --text-2: #52555e;
+  --text-3: #8a8f9a;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: rgba(79, 70, 229, 0.1);
   --accent-text: #ffffff;
-  --danger: #d13c42;
-  --success: #1f8a4c;
-  --warning: #9a6b00;
 
-  --field: rgba(47, 111, 235, 0.14);
-  --field-border: rgba(47, 111, 235, 0.65);
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.1);
+  --success: #059669;
+  --warning: #b45309;
 
+  --radius-lg: 12px;
   --radius: 8px;
   --radius-sm: 6px;
-  --shadow: 0 1px 2px rgba(16, 22, 34, 0.06), 0 8px 24px rgba(16, 22, 34, 0.08);
 
-  --toolbar-h: 52px;
-  --status-h: 28px;
-  --sidebar-w: 184px;
-  --panel-w: 330px;
+  /* Layered shadows read as depth; a single hard shadow reads as a sticker. */
+  --shadow-sm: 0 1px 2px rgba(16, 20, 30, 0.06);
+  --shadow: 0 1px 3px rgba(16, 20, 30, 0.08), 0 6px 16px rgba(16, 20, 30, 0.06);
+  --shadow-lg: 0 8px 24px rgba(16, 20, 30, 0.12), 0 24px 56px rgba(16, 20, 30, 0.14);
 
-  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --mono: 'Cascadia Mono', Consolas, 'SF Mono', monospace;
+  --toolbar-h: 56px;
+  --substrip-h: 46px;
+  --status-h: 30px;
+  --sidebar-w: 196px;
+  --panel-w: 336px;
+
+  --font:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI',
+    Roboto, sans-serif;
+  --mono: 'Cascadia Mono', 'SF Mono', Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #15181e;
-    --bg-raised: #1e222a;
-    --bg-sunken: #101318;
-    --border: #2b313b;
-    --border-strong: #414957;
+    color-scheme: dark;
 
-    --text: #e6e9ef;
-    --text-muted: #9aa3b2;
+    --bg: #0c0d10;
+    --surface: #16181d;
+    --surface-2: #1e2127;
+    --surface-3: #272b33;
+    --border: #24272e;
+    --border-strong: #363b45;
 
-    --accent: #5b8def;
-    --danger: #f0656b;
-    --success: #46bd77;
-    --warning: #d9a33a;
+    --text: #f2f3f5;
+    --text-2: #a8adb8;
+    --text-3: #71767f;
 
-    --field: rgba(91, 141, 239, 0.2);
-    --field-border: rgba(91, 141, 239, 0.75);
+    --accent: #6366f1;
+    --accent-hover: #7c7ff3;
+    --accent-soft: rgba(99, 102, 241, 0.16);
 
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
+    --danger: #f87171;
+    --danger-soft: rgba(248, 113, 113, 0.14);
+    --success: #34d399;
+    --warning: #fbbf24;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 6px 16px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6), 0 24px 56px rgba(0, 0, 0, 0.5);
   }
 }
 
@@ -81,88 +106,140 @@ body,
 body {
   font-family: var(--font);
   font-size: 13px;
+  line-height: 1.45;
   color: var(--text);
   background: var(--bg);
   /* The app owns all scrolling; the window itself never scrolls. */
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
+h1,
 h2,
 h3 {
   margin: 0;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 code {
   font-family: var(--mono);
   font-size: 0.92em;
-  padding: 1px 4px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-sunken);
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-2);
 }
 
-/* ------------------------------------------------------------ Form controls */
+kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 2px 6px;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Custom scrollbars — the stock Windows ones are the loudest thing on screen. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+  background-clip: content-box;
+}
+
+/* ----------------------------------------------------------------- Buttons */
 
 button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font: inherit;
-  color: var(--text);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
+  font-weight: 500;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  padding: 5px 11px;
+  padding: 6px 10px;
   cursor: pointer;
   white-space: nowrap;
   transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
+    background 0.13s ease,
+    color 0.13s ease,
+    border-color 0.13s ease;
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--bg-sunken);
+  color: var(--text);
+  background: var(--surface-2);
 }
 
 button:active:not(:disabled) {
-  transform: translateY(0.5px);
+  background: var(--surface-3);
 }
 
 button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+  opacity: 0.4;
+  cursor: default;
 }
 
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
+:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 
 .button--primary {
-  background: var(--accent);
-  border-color: var(--accent);
   color: var(--accent-text);
-  font-weight: 600;
+  background: var(--accent);
+  box-shadow: var(--shadow-sm);
 }
 
-.button--primary:hover:not(:disabled) {
-  background: var(--accent);
-  filter: brightness(1.08);
+.button--primary:hover:not(:disabled),
+.button--primary:active:not(:disabled) {
+  color: var(--accent-text);
+  background: var(--accent-hover);
 }
 
 .button--danger {
   color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
 }
 
-.button--link {
-  background: none;
-  border: none;
-  padding: 0;
-  text-decoration: underline;
+.button--danger:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
+
+/* Bordered variant, for the few places a button must read as a control. */
+.button--outline {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.button--icon {
+  padding: 6px;
+}
+
+/* ------------------------------------------------------------ Form controls */
 
 input[type='text'],
 input[type='number'],
@@ -172,10 +249,27 @@ textarea {
   font: inherit;
   width: 100%;
   color: var(--text);
-  background: var(--bg-raised);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 5px 7px;
+  padding: 7px 9px;
+  transition:
+    border-color 0.13s ease,
+    box-shadow 0.13s ease;
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 textarea {
@@ -187,107 +281,111 @@ input:disabled,
 select:disabled,
 textarea:disabled {
   opacity: 0.55;
-  cursor: not-allowed;
+  cursor: default;
 }
 
 .form-control {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin-bottom: 10px;
+  gap: 5px;
+  margin-bottom: 14px;
 }
 
 .form-control > span {
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  color: var(--text-2);
 }
 
 .checkbox,
 .radio {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 7px;
+  gap: 8px;
+  margin-bottom: 8px;
   cursor: pointer;
+  user-select: none;
 }
 
 .checkbox input,
 .radio input {
   width: auto;
   margin: 0;
+  accent-color: var(--accent);
   cursor: pointer;
 }
 
 .form-error {
-  margin: -6px 0 8px;
+  margin: -8px 0 10px;
   font-size: 11px;
   color: var(--danger);
 }
 
 .hint {
-  margin: 4px 0;
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-muted);
+  margin: 5px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-3);
 }
 
-/* ----------------------------------------------------------------- Layout */
+/* ------------------------------------------------------------------ Layout */
 
 .app {
   display: grid;
-  /* The update banner row collapses to zero height when nothing is showing. */
-  grid-template-rows: var(--toolbar-h) auto 1fr var(--status-h);
+  /* The banner and add-strip rows collapse to zero when not rendered. */
+  grid-template-rows: var(--toolbar-h) auto auto 1fr var(--status-h);
   height: 100%;
+  background: var(--bg);
 }
 
+/* The 1px gap plus a tinted parent draws every panel divider at once. */
 .app__body {
   display: flex;
   min-height: 0;
   overflow: hidden;
+  gap: 1px;
+  background: var(--border);
 }
 
-/* ---------------------------------------------------------------- Toolbar */
+/* ----------------------------------------------------------------- Toolbar */
 
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  background: var(--bg-raised);
+  gap: 4px;
+  padding: 0 14px;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
 .toolbar__brand {
   display: flex;
-  align-items: baseline;
-  gap: 1px;
-  margin-right: 4px;
+  align-items: center;
+  margin-right: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
   user-select: none;
 }
 
 .toolbar__logo {
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  color: var(--text);
 }
 
 .toolbar__logo-sub {
-  font-weight: 800;
-  letter-spacing: -0.02em;
   color: var(--danger);
 }
 
 .toolbar__group {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 
 .toolbar__divider {
   width: 1px;
-  height: 22px;
+  height: 20px;
+  margin: 0 8px;
   background: var(--border);
 }
 
@@ -295,55 +393,110 @@ textarea:disabled {
   flex: 1;
 }
 
-.toolbar__zoom-label {
-  min-width: 44px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
+/* A pill around the zoom controls groups them without three more borders. */
+.toolbar__zoom {
+  gap: 0;
+  padding: 2px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
 }
 
-/* --------------------------------------------------------------- Sidebar */
+.toolbar__zoom button {
+  padding: 4px 7px;
+}
+
+.toolbar__zoom-label {
+  min-width: 48px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+/* ------------------------------------------------------------- Add-a-field */
+
+.field-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--substrip-h);
+  padding: 0 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.field-toolbar__label {
+  margin-right: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.field-toolbar__button {
+  padding: 5px 11px 5px 8px;
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.field-toolbar__button:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.field-toolbar__hint {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+/* ----------------------------------------------------------------- Sidebar */
 
 .sidebar {
   display: flex;
   flex-direction: column;
   width: var(--sidebar-w);
   flex: 0 0 var(--sidebar-w);
-  background: var(--bg-raised);
-  border-right: 1px solid var(--border);
+  background: var(--surface);
   overflow: hidden;
 }
 
-.sidebar__header,
+.sidebar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 10px 12px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.sidebar__header-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.sidebar__header-actions button,
+.sidebar__selection-bar button {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
 .sidebar__selection-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
+  margin: 0 10px 8px;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.sidebar__header-actions {
-  display: flex;
-  gap: 3px;
-}
-
-.sidebar__header-actions button {
-  padding: 1px 6px;
-  font-size: 11px;
-}
-
-.sidebar__selection-bar {
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
-  color: var(--text);
-}
-
-.sidebar__selection-bar button {
-  padding: 1px 6px;
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
 }
 
 .thumbnails {
@@ -351,45 +504,49 @@ textarea:disabled {
   overflow-y: auto;
   list-style: none;
   margin: 0;
-  padding: 8px;
+  padding: 0 10px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .thumbnail {
   position: relative;
-  padding: 4px;
-  border: 2px solid transparent;
+  padding: 0;
   border-radius: var(--radius);
   cursor: pointer;
-  background: var(--bg-sunken);
 }
 
-.thumbnail:hover {
-  border-color: var(--border-strong);
-}
-
-.thumbnail--current {
-  border-color: var(--accent);
-}
-
-.thumbnail--selected {
-  background: color-mix(in srgb, var(--accent) 18%, var(--bg-sunken));
-}
-
-/* Marks where a dragged page will land. */
-.thumbnail--drop-target {
-  border-color: var(--success);
-  border-style: dashed;
-}
-
+/* The ring lives on the frame so it hugs the page, not the label below it. */
 .thumbnail__frame {
   width: 100%;
-  background: #fff;
-  border: 1px solid var(--border);
   overflow: hidden;
   display: flex;
+  background: #fff;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  outline: 1px solid var(--border);
+  transition:
+    outline-color 0.13s ease,
+    box-shadow 0.13s ease;
+}
+
+.thumbnail:hover .thumbnail__frame {
+  outline-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+
+.thumbnail--current .thumbnail__frame {
+  outline: 2px solid var(--accent);
+}
+
+.thumbnail--selected .thumbnail__frame {
+  outline: 2px solid var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.thumbnail--drop-target .thumbnail__frame {
+  outline: 2px dashed var(--success);
 }
 
 .thumbnail__frame img {
@@ -405,29 +562,30 @@ textarea:disabled {
   justify-content: center;
   width: 100%;
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--text-3);
 }
 
 .thumbnail__meta {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 4px;
+  gap: 5px;
+  padding: 5px 2px 0;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-3);
 }
 
 .thumbnail__number {
   font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
 .badge {
-  padding: 0 4px;
-  font-size: 9px;
-  font-weight: 700;
-  border-radius: 3px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
+  padding: 1px 5px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-radius: 4px;
 }
 
 .thumbnail__actions {
@@ -436,8 +594,12 @@ textarea:disabled {
   right: 6px;
   display: flex;
   gap: 2px;
+  padding: 2px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity 0.13s ease;
 }
 
 .thumbnail:hover .thumbnail__actions {
@@ -445,19 +607,17 @@ textarea:disabled {
 }
 
 .thumbnail__actions button {
-  padding: 0 4px;
-  font-size: 12px;
-  line-height: 1.5;
+  padding: 3px;
 }
 
-/* ---------------------------------------------------------------- Viewer */
+/* ------------------------------------------------------------------ Viewer */
 
 .viewer {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--bg-sunken);
+  background: var(--bg);
 }
 
 .viewer__scroll {
@@ -466,7 +626,7 @@ textarea:disabled {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: 24px;
+  padding: 28px;
 }
 
 .viewer--empty {
@@ -475,17 +635,17 @@ textarea:disabled {
 }
 
 .empty-state {
-  max-width: 380px;
-  padding: 28px;
+  max-width: 400px;
+  padding: 32px;
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-2);
 }
 
 .empty-state__mark {
-  margin-bottom: 14px;
-  font-size: 30px;
+  margin-bottom: 18px;
+  font-size: 34px;
   font-weight: 800;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.04em;
   color: var(--text);
 }
 
@@ -494,32 +654,17 @@ textarea:disabled {
 }
 
 .empty-state h2 {
-  margin-bottom: 6px;
-  font-size: 17px;
+  margin-bottom: 8px;
+  font-size: 18px;
   color: var(--text);
-}
-
-kbd {
-  padding: 1px 5px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
-  border-radius: 4px;
 }
 
 .page-surface {
   position: relative;
   flex: none;
   background: #fff;
-  box-shadow: var(--shadow);
-}
-
-/* Crosshair signals that dragging draws a field rather than selecting. */
-.page-surface--drawing {
-  cursor: crosshair;
+  border-radius: 2px;
+  box-shadow: var(--shadow-lg);
 }
 
 .page-surface__image {
@@ -527,6 +672,7 @@ kbd {
   height: 100%;
   display: block;
   user-select: none;
+  border-radius: 2px;
 }
 
 .page-surface__placeholder {
@@ -535,279 +681,392 @@ kbd {
   align-items: center;
   justify-content: center;
   height: 100%;
-  padding: 20px;
+  padding: 24px;
   text-align: center;
-  color: var(--text-muted);
-}
-
-.field-box {
-  position: absolute;
-  padding: 0;
-  background: var(--field);
-  border: 1px solid var(--field-border);
-  border-radius: 2px;
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.field-box:hover,
-.field-box--selected {
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
-  border-width: 2px;
-}
-
-.field-box--selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-
-/* Read-only fields are shown but visibly inert. */
-.field-box--readonly {
-  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
-  border-color: var(--text-muted);
-  border-style: dashed;
-  cursor: not-allowed;
-}
-
-/*
- * In-place field editor: sits exactly on the field rectangle so what you type
- * lines up with where it will print.
- */
-.field-editor {
-  position: absolute;
-  padding: 0 2px;
-  margin: 0;
-  line-height: 1.1;
-  color: var(--text);
-  background: #fff;
-  border: 2px solid var(--accent);
-  border-radius: 2px;
-  box-shadow: 0 2px 8px rgba(16, 22, 34, 0.25);
-  resize: none;
-  z-index: 2;
-}
-
-@media (prefers-color-scheme: dark) {
-  /* The page underneath is always white, so the editor stays light too. */
-  .field-editor {
-    color: #111;
-  }
-}
-
-.field-box__label {
-  position: absolute;
-  left: 2px;
-  top: 1px;
-  font-size: 9px;
-  line-height: 1.2;
-  color: var(--accent);
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-.draw-box {
-  position: absolute;
-  background: color-mix(in srgb, var(--success) 22%, transparent);
-  border: 1px dashed var(--success);
-  pointer-events: none;
+  color: var(--text-3);
 }
 
 .viewer__pager {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 6px;
-  background: var(--bg-raised);
-  border-top: 1px solid var(--border);
+  gap: 6px;
+  padding: 8px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-2);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
 }
 
-/* ----------------------------------------------------------------- Panel */
+.viewer__pager span {
+  min-width: 112px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ Field overlay */
+
+.field-box {
+  position: absolute;
+  display: block;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  background: rgba(79, 70, 229, 0.08);
+  border: 1px solid rgba(79, 70, 229, 0.45);
+  border-radius: 3px;
+  cursor: move;
+  overflow: visible;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease;
+}
+
+.field-box:hover {
+  background: rgba(79, 70, 229, 0.16);
+  border-color: var(--accent);
+}
+
+.field-box--selected {
+  background: rgba(79, 70, 229, 0.14);
+  border: 1.5px solid var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  z-index: 2;
+}
+
+.field-box--dragging {
+  z-index: 3;
+  opacity: 0.92;
+  box-shadow: var(--shadow-lg);
+}
+
+.field-box--readonly {
+  background: rgba(120, 125, 140, 0.12);
+  border-color: var(--text-3);
+  border-style: dashed;
+  cursor: default;
+}
+
+.field-box__label {
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: calc(100% - 6px);
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1.1;
+  color: var(--accent);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  background: var(--surface);
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  box-shadow: var(--shadow-sm);
+  z-index: 4;
+}
+
+.field-handle--nw,
+.field-handle--se {
+  cursor: nwse-resize;
+}
+
+.field-handle--ne,
+.field-handle--sw {
+  cursor: nesw-resize;
+}
+
+.field-handle--n,
+.field-handle--s {
+  cursor: ns-resize;
+}
+
+.field-handle--e,
+.field-handle--w {
+  cursor: ew-resize;
+}
+
+/*
+ * In-place editor: sits exactly on the field rectangle so what is typed lines
+ * up with where it will print. The page under it is always white, so this
+ * stays light even in dark mode.
+ */
+.field-editor {
+  position: absolute;
+  width: auto;
+  padding: 0 3px;
+  margin: 0;
+  line-height: 1.1;
+  color: #111;
+  background: #fff;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+  box-shadow: var(--shadow-lg);
+  resize: none;
+  z-index: 5;
+}
+
+/* ------------------------------------------------------------------- Panel */
 
 .panel {
   display: flex;
   flex-direction: column;
   width: var(--panel-w);
   flex: 0 0 var(--panel-w);
-  background: var(--bg-raised);
-  border-left: 1px solid var(--border);
+  background: var(--surface);
   overflow: hidden;
 }
 
+/* A segmented control rather than a row of underlined tabs. */
 .panel__tabs {
   display: flex;
-  border-bottom: 1px solid var(--border);
+  gap: 2px;
+  margin: 12px 14px 10px;
+  padding: 3px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
 }
 
 .panel__tab {
   flex: 1;
-  border: none;
-  border-radius: 0;
-  border-bottom: 2px solid transparent;
-  background: none;
-  padding: 8px 4px;
-  color: var(--text-muted);
+  justify-content: center;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
 }
 
-.panel__tab--active {
+.panel__tab--active,
+.panel__tab--active:hover {
   color: var(--text);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .panel__content {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 0 14px 18px;
 }
 
 .panel__empty {
-  padding: 20px 4px;
+  padding: 32px 8px;
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-3);
 }
+
+.panel__selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 7px 8px 7px 11px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius);
+}
+
+.panel__selection-bar > div {
+  display: flex;
+  gap: 2px;
+}
+
+.panel__selection-bar button {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+/* ----------------------------------------------------------------- Summary */
 
 .summary {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 6px 12px;
+  gap: 9px 14px;
   margin: 0;
   font-size: 12px;
 }
 
 .summary dt {
-  color: var(--text-muted);
+  color: var(--text-3);
 }
 
 .summary dd {
   margin: 0;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
 .summary__path {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--text-2);
 }
 
-/* ------------------------------------------------------------ Field list */
+/* ------------------------------------------------------------ Shortcut list */
+
+.shortcuts {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.shortcuts h3 {
+  margin-bottom: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.shortcuts dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.shortcuts dt {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.shortcuts dd {
+  margin: 0;
+  color: var(--text-2);
+}
+
+/* --------------------------------------------------------------- Field list */
 
 .field-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
 .field-row {
-  padding: 8px;
+  padding: 11px 12px;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--bg);
+  cursor: pointer;
+  transition:
+    border-color 0.13s ease,
+    box-shadow 0.13s ease;
 }
 
-.field-row--focused {
+.field-row:hover {
+  border-color: var(--border-strong);
+}
+
+.field-row--selected {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field-row input,
+.field-row textarea,
+.field-row select {
+  cursor: auto;
 }
 
 .field-row__header {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 5px;
-}
-
-.field-row__name {
-  font-weight: 600;
-  overflow-wrap: anywhere;
+  margin-bottom: 8px;
 }
 
 /*
- * The name doubles as a rename box. It reads as plain text until hovered or
- * focused, so the row stays scannable but the affordance is discoverable.
+ * The name doubles as a rename box: plain text until hovered or focused, so
+ * the row stays scannable but the affordance is discoverable.
  */
 .field-row__name-input {
   width: auto;
   flex: 1;
   min-width: 0;
-  padding: 2px 4px;
+  padding: 3px 6px;
+  font-size: 12.5px;
   font-weight: 600;
   background: transparent;
   border-color: transparent;
 }
 
 .field-row__name-input:hover:not(:disabled) {
-  background: var(--bg-raised);
+  background: var(--surface-2);
   border-color: var(--border);
 }
 
-.field-row__name-input:focus {
-  background: var(--bg-raised);
-  border-color: var(--accent);
+.field-row__kind {
+  flex: none;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border-radius: 999px;
 }
 
 .field-row__required {
-  color: var(--danger);
   margin-left: 2px;
+  color: var(--danger);
 }
 
-.field-row__kind {
-  font-size: 10px;
-  color: var(--text-muted);
-  text-transform: uppercase;
+.field-row__size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.field-row__size .checkbox {
+  margin-bottom: 0;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.field-row__size-input {
+  width: 62px;
+  margin-left: auto;
+  padding: 4px 7px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.field-row__size-unit {
+  font-size: 11px;
+  color: var(--text-3);
 }
 
 .field-row__footer {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 6px;
+  margin-top: 9px;
   font-size: 11px;
 }
 
-.field-row__footer .button--link {
-  margin-left: auto;
-  font-size: 11px;
+.field-row__footer .hint {
+  margin: 0;
 }
 
-/* ---------------------------------------------------------- Design panel */
-
-.design-panel__section {
-  padding-bottom: 14px;
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.design-panel__section:last-child {
-  border-bottom: none;
-}
-
-.design-panel__section h3 {
-  margin-bottom: 8px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--text-muted);
-}
-
-.kind-picker {
-  display: flex;
-  gap: 4px;
-}
-
-.kind-picker__option {
-  flex: 1;
-}
-
-.kind-picker__option--active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-text);
-  font-weight: 600;
-}
-
-/* ----------------------------------------------------------------- Modal */
+/* ------------------------------------------------------------------- Modal */
 
 .modal-backdrop {
   position: fixed;
@@ -816,8 +1075,9 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
-  background: rgba(10, 13, 18, 0.5);
+  padding: 28px;
+  background: rgba(10, 12, 18, 0.45);
+  backdrop-filter: blur(3px);
 }
 
 .modal {
@@ -825,63 +1085,68 @@ kbd {
   flex-direction: column;
   max-height: 100%;
   width: 100%;
-  max-width: 440px;
-  background: var(--bg-raised);
-  border-radius: var(--radius);
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
+  max-width: 460px;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
 .modal--wide {
-  max-width: 760px;
+  max-width: 800px;
 }
 
 .modal__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+  padding: 16px 20px 14px;
+}
+
+.modal__header h2 {
+  font-size: 16px;
 }
 
 .modal__close {
-  border: none;
-  background: none;
-  font-size: 20px;
-  line-height: 1;
-  padding: 0 4px;
-  color: var(--text-muted);
+  padding: 4px;
+  color: var(--text-3);
 }
 
 .modal__body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 4px 20px 20px;
 }
 
 .modal__footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 12px 16px;
+  padding: 14px 20px;
+  background: var(--surface-2);
   border-top: 1px solid var(--border);
+}
+
+.modal__footer button:not(.button--primary) {
+  border-color: var(--border);
+  background: var(--surface);
 }
 
 .modal__error,
 .modal__success {
-  padding: 10px 16px;
+  padding: 12px 20px;
   font-size: 12px;
   border-top: 1px solid var(--border);
 }
 
 .modal__error {
   color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 10%, var(--bg-raised));
+  background: var(--danger-soft);
 }
 
 .modal__success {
   color: var(--success);
-  background: color-mix(in srgb, var(--success) 10%, var(--bg-raised));
+  background: rgba(5, 150, 105, 0.1);
 }
 
 .modal__success p,
@@ -896,44 +1161,121 @@ kbd {
 .print-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px 24px;
+  gap: 8px 28px;
 }
 
 .print-section h3 {
-  margin-bottom: 10px;
-  padding-bottom: 5px;
-  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--text-muted);
+  font-weight: 600;
+  color: var(--text-3);
 }
 
-@media (max-width: 700px) {
+@media (max-width: 720px) {
   .print-grid {
     grid-template-columns: 1fr;
   }
 }
 
-/* ------------------------------------------------------------ Status bar */
+/* ----------------------------------------------------------- Update banner */
+
+.update-banner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 14px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+.update-banner--error {
+  background: var(--danger-soft);
+}
+
+.update-banner__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--accent-text);
+  background: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.update-banner--error .update-banner__icon {
+  background: var(--danger);
+}
+
+.update-banner__text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.update-banner__detail {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.update-banner__dismiss {
+  padding: 4px;
+  color: var(--text-3);
+}
+
+/* Progress rides the bottom edge so it never shifts the layout. */
+.update-banner__progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--accent-soft);
+}
+
+.update-banner__progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease-out;
+}
+
+/* --------------------------------------------------------------- Status bar */
 
 .status-bar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 12px;
-  background: var(--bg-raised);
+  padding: 0 14px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  background: var(--surface);
   border-top: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--text-muted);
   overflow: hidden;
 }
 
 .status-bar__doc {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   white-space: nowrap;
+  color: var(--text-2);
 }
 
 .status-bar__dirty {
@@ -963,294 +1305,6 @@ kbd {
 }
 
 .status-bar__error button {
-  border: none;
-  background: none;
-  padding: 0 2px;
+  padding: 2px;
   color: inherit;
-  font-size: 13px;
-  line-height: 1;
-}
-
-/* ----------------------------------------------- Selection bars & shortcuts */
-
-.panel__selection-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised));
-  font-size: 11px;
-}
-
-.panel__selection-bar > div {
-  display: flex;
-  gap: 4px;
-}
-
-.panel__selection-bar button {
-  padding: 1px 6px;
-  font-size: 11px;
-}
-
-.field-row {
-  cursor: pointer;
-}
-
-.field-row--selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-
-/* Inputs inside a row should not feel like part of the row's click target. */
-.field-row input,
-.field-row textarea,
-.field-row select {
-  cursor: auto;
-}
-
-.shortcuts {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-
-.shortcuts h3 {
-  margin-bottom: 8px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--text-muted);
-}
-
-.shortcuts dl {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 12px;
-  margin: 0;
-  font-size: 11px;
-}
-
-.shortcuts dt {
-  font-family: var(--mono);
-  color: var(--text);
-  white-space: nowrap;
-}
-
-.shortcuts dd {
-  margin: 0;
-  color: var(--text-muted);
-}
-
-/* ---------------------------------------------------------- Update banner */
-
-.update-banner {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 12px;
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised));
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
-  font-size: 12px;
-}
-
-.update-banner--error {
-  background: color-mix(in srgb, var(--danger) 12%, var(--bg-raised));
-  border-bottom-color: color-mix(in srgb, var(--danger) 35%, var(--border));
-}
-
-.update-banner__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--accent-text);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.update-banner--error .update-banner__icon {
-  background: var(--danger);
-}
-
-.update-banner__text {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-}
-
-.update-banner__detail {
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.update-banner__actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-}
-
-.update-banner__dismiss {
-  border: none;
-  background: none;
-  padding: 0 4px;
-  font-size: 16px;
-  line-height: 1;
-  color: var(--text-muted);
-}
-
-/* Progress sits on the banner's bottom edge so it never shifts the layout. */
-.update-banner__progress {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  width: 100%;
-  height: 2px;
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-}
-
-.update-banner__progress-fill {
-  height: 100%;
-  background: var(--accent);
-  transition: width 0.2s ease-out;
-}
-
-/* ------------------------------------------------------ Add-a-field strip */
-
-.field-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--bg-raised);
-  border-bottom: 1px solid var(--border);
-}
-
-.field-toolbar__label {
-  margin-right: 2px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.field-toolbar__button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.field-toolbar__glyph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 17px;
-  height: 17px;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  border-radius: 4px;
-}
-
-.field-toolbar__hint {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-/* -------------------------------------------------------- Field handles */
-
-.field-box {
-  /* The box is now a div rather than a button, so restore the basics. */
-  display: block;
-  padding: 0;
-  font: inherit;
-  text-align: left;
-  cursor: move;
-}
-
-.field-box--dragging {
-  /* Above its neighbours while being dragged, and clearly "in hand". */
-  z-index: 3;
-  opacity: 0.9;
-  box-shadow: 0 4px 14px rgba(16, 22, 34, 0.28);
-}
-
-.field-box--readonly {
-  cursor: not-allowed;
-}
-
-/*
- * Resize grips. Centred on their corner or edge via a translate, so the
- * percentage positions in the markup stay simple.
- */
-.field-handle {
-  position: absolute;
-  width: 9px;
-  height: 9px;
-  margin: -4.5px 0 0 -4.5px;
-  background: var(--bg-raised);
-  border: 1.5px solid var(--accent);
-  border-radius: 2px;
-  z-index: 4;
-}
-
-.field-handle--nw,
-.field-handle--se {
-  cursor: nwse-resize;
-}
-
-.field-handle--ne,
-.field-handle--sw {
-  cursor: nesw-resize;
-}
-
-.field-handle--n,
-.field-handle--s {
-  cursor: ns-resize;
-}
-
-.field-handle--e,
-.field-handle--w {
-  cursor: ew-resize;
-}
-
-/* ------------------------------------------------------ Field size control */
-
-.field-row__size {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.field-row__size .checkbox {
-  margin-bottom: 0;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.field-row__size-input {
-  width: 60px;
-  margin-left: auto;
-  text-align: right;
-}
-
-.field-row__size-unit {
-  font-size: 11px;
-  color: var(--text-muted);
 }

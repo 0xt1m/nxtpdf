@@ -30,7 +30,7 @@ export function useKeyboardShortcuts(): void {
       // controls, which the typing guard below would otherwise swallow.
       if (event.key === 'Escape' && state.printDialogOpen) {
         event.preventDefault();
-        state.setPrintDialogOpen(false);
+        state.closePrintDialog();
         return;
       }
 
@@ -52,7 +52,9 @@ export function useKeyboardShortcuts(): void {
             // open the browser print dialog, which has no tray or duplex
             // control and is exactly what this app exists to replace.
             event.preventDefault();
-            if (state.doc) state.setPrintDialogOpen(true);
+            if (!state.doc) return;
+            // Shift starts the dialog on the current page selection.
+            state.openPrintDialog(event.shiftKey ? 'selected' : 'all');
             return;
 
           case 'c':

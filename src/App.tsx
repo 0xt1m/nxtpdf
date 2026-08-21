@@ -1,22 +1,20 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { Toolbar } from '@/components/Toolbar';
 import { PageSidebar } from '@/components/PageSidebar';
 import { Viewer } from '@/components/Viewer';
 import { FieldsPanel } from '@/components/FieldsPanel';
-import { DesignPanel, EMPTY_DRAFT, type DraftField } from '@/components/DesignPanel';
+import { FieldToolbar } from '@/components/FieldToolbar';
 import { PrintDialog } from '@/components/PrintDialog';
 import { StatusBar } from '@/components/StatusBar';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useAppUpdater } from '@/hooks/useAppUpdater';
 import { useStore, type SidePanel } from '@/state/store';
-import type { FieldKind, NewField } from '@/lib/types';
 
 const PANELS: { id: SidePanel; label: string }[] = [
   { id: 'pages', label: 'Pages' },
   { id: 'fields', label: 'Fields' },
-  { id: 'design', label: 'Design' },
 ];
 
 export default function App() {
@@ -24,13 +22,10 @@ export default function App() {
   const panel = useStore((s) => s.panel);
   const setPanel = useStore((s) => s.setPanel);
   const refresh = useStore((s) => s.refresh);
-  const createField = useStore((s) => s.createField);
   const setRenderingAvailable = useStore((s) => s.setRenderingAvailable);
   const setError = useStore((s) => s.setError);
-
-  const [printOpen, setPrintOpen] = useState(false);
-  const [draft, setDraft] = useState<DraftField>(EMPTY_DRAFT);
-  const [drawKind, setDrawKind] = useState<FieldKind | null>(null);
+  const printDialogOpen = useStore((s) => s.printDialogOpen);
+  const setPrintDialogOpen = useStore((s) => s.setPrintDialogOpen);
 
   useKeyboardShortcuts();
   const updater = useAppUpdater();
@@ -52,54 +47,16 @@ export default function App() {
     };
   }, [setRenderingAvailable, setError]);
 
-  // Leaving the Design tab should never leave the viewer stuck in draw mode.
-  useEffect(() => {
-    if (panel !== 'design') setDrawKind(null);
-  }, [panel]);
-
-  const handleDrawComplete = useCallback(
-    async (rect: [number, number, number, number], pageIndex: number) => {
-      const name = draft.name.trim();
-      if (!name) return;
-
-      const field: NewField = {
-        pageIndex,
-        name,
-        kind: draft.kind,
-        rect,
-        fontSize: draft.kind === 'text' ? draft.fontSize : null,
-        multiline: draft.kind === 'text' ? draft.multiline : false,
-        required: draft.required,
-        maxLength: null,
-        options:
-          draft.kind === 'choice'
-            ? draft.optionsText
-                .split('\n')
-                .map((option) => option.trim())
-                .filter(Boolean)
-            : [],
-      };
-
-      await createField(field);
-      setDrawKind(null);
-      // Clear only the name so several similar fields can be placed in a row.
-      setDraft((current) => ({ ...current, name: '' }));
-    },
-    [draft, createField]
-  );
-
   return (
     <div className="app">
-      <Toolbar onPrint={() => setPrintOpen(true)} />
+      <Toolbar onPrint={() => setPrintDialogOpen(true)} />
       <UpdateBanner updater={updater} />
+      <FieldToolbar />
 
       <div className="app__body">
         {doc && <PageSidebar />}
 
-        <Viewer
-          drawKind={drawKind}
-          onDrawComplete={(rect, pageIndex) => void handleDrawComplete(rect, pageIndex)}
-        />
+        <Viewer />
 
         {doc && (
           <aside className="panel">
@@ -118,16 +75,6 @@ export default function App() {
             <div className="panel__content">
               {panel === 'pages' && <DocumentSummary />}
               {panel === 'fields' && <FieldsPanel />}
-              {panel === 'design' && (
-                <DesignPanel
-                  draft={draft}
-                  onDraftChange={setDraft}
-                  drawing={drawKind !== null}
-                  onToggleDrawing={() =>
-                    setDrawKind((current) => (current ? null : draft.kind))
-                  }
-                />
-              )}
             </div>
           </aside>
         )}
@@ -135,7 +82,7 @@ export default function App() {
 
       <StatusBar />
 
-      {printOpen && <PrintDialog onClose={() => setPrintOpen(false)} />}
+      {printDialogOpen && <PrintDialog onClose={() => setPrintDialogOpen(false)} />}
     </div>
   );
 }
@@ -176,8 +123,16 @@ function DocumentSummary() {
           <dd>Save As</dd>
           <dt>Ctrl + O</dt>
           <dd>Open</dd>
+          <dt>Ctrl + P</dt>
+          <dd>Print</dd>
           <dt>Del</dt>
           <dd>Delete selected pages or fields</dd>
+          <dt>Ctrl + C / V</dt>
+          <dd>Copy and paste fields</dd>
+          <dt>Arrows</dt>
+          <dd>Nudge selected fields (Shift for 10×)</dd>
+          <dt>Double-click</dt>
+          <dd>Edit a field on the page</dd>
           <dt>Ctrl + click</dt>
           <dd>Add to selection</dd>
           <dt>Shift + click</dt>

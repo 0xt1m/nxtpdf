@@ -19,7 +19,9 @@ export function FieldsPanel() {
     return (
       <div className="panel__empty">
         <p>This document has no form fields.</p>
-        <p className="hint">Switch to the Design tab to add some.</p>
+        <p className="hint">
+          Use the Add buttons above the page to place one, then rename it here.
+        </p>
       </div>
     );
   }
@@ -73,14 +75,25 @@ interface FieldRowProps {
   onSelect: (event: React.MouseEvent) => void;
 }
 
+/** Field kinds whose text size is meaningful. */
+const SIZEABLE = ['text', 'choice'];
+
+/** Fallback shown in the size box when a field is set to auto. */
+const DEFAULT_POINT_SIZE = 10;
+
 function FieldRow({ field, busy, isSelected, onSelect }: FieldRowProps) {
   const setFieldValue = useStore((s) => s.setFieldValue);
   const renameField = useStore((s) => s.renameField);
+  const setFieldFontSize = useStore((s) => s.setFieldFontSize);
 
   // Local drafts so typing stays responsive; committed on blur, not per key.
   const [draft, setDraft] = useState(field.value ?? '');
   const [nameDraft, setNameDraft] = useState(() => partialName(field.name));
   const rowRef = useRef<HTMLDivElement>(null);
+
+  // A size of 0 is the PDF spec's way of saying "shrink text to fit the box".
+  const isAutoSize = field.fontSize === 0;
+  const [sizeDraft, setSizeDraft] = useState(() => field.fontSize ?? DEFAULT_POINT_SIZE);
 
   // Re-sync when the backend snapshot changes underneath us.
   useEffect(() => {
@@ -90,6 +103,10 @@ function FieldRow({ field, busy, isSelected, onSelect }: FieldRowProps) {
   useEffect(() => {
     setNameDraft(partialName(field.name));
   }, [field.name]);
+
+  useEffect(() => {
+    if (field.fontSize !== null && field.fontSize > 0) setSizeDraft(field.fontSize);
+  }, [field.fontSize]);
 
   // Clicking a field on the page selects it here, which is useless if the row
   // is scrolled out of sight.
@@ -104,6 +121,12 @@ function FieldRow({ field, busy, isSelected, onSelect }: FieldRowProps) {
   function commitValue(value: string) {
     if (value === (field.value ?? '')) return;
     void setFieldValue(field.name, value);
+  }
+
+  function commitSize(size: number) {
+    const clamped = Math.min(144, Math.max(4, Math.round(size)));
+    setSizeDraft(clamped);
+    if (clamped !== field.fontSize) void setFieldFontSize(field.name, clamped);
   }
 
   function commitName() {
@@ -209,6 +232,41 @@ function FieldRow({ field, busy, isSelected, onSelect }: FieldRowProps) {
       )}
 
       {field.kind === 'pushButton' && <p className="hint">Push button — no value.</p>}
+
+      {SIZEABLE.includes(field.kind) && (
+        <div className="field-row__size">
+          <label className="checkbox" title="Shrink the text to fit the field">
+            <input
+              type="checkbox"
+              checked={isAutoSize}
+              disabled={disabled}
+              onChange={(event) =>
+                void setFieldFontSize(field.name, event.target.checked ? 0 : sizeDraft)
+              }
+            />
+            <span>Auto size</span>
+          </label>
+
+          <input
+            className="field-row__size-input"
+            type="number"
+            min={4}
+            max={144}
+            step={1}
+            value={sizeDraft}
+            disabled={disabled || isAutoSize}
+            aria-label="Font size in points"
+            title={isAutoSize ? 'Turn off auto size to set this' : 'Font size in points'}
+            onChange={(event) => setSizeDraft(Number(event.target.value))}
+            onBlur={() => commitSize(sizeDraft)}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === 'Enter') event.currentTarget.blur();
+            }}
+          />
+          <span className="field-row__size-unit">pt</span>
+        </div>
+      )}
 
       <div className="field-row__footer">
         {field.required && <span className="hint">required</span>}

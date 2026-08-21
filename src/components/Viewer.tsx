@@ -7,16 +7,32 @@ import {
   screenRectToPdf,
   type ScreenRect,
 } from '@/lib/geometry';
-import type { FieldKind, FormField, PageInfo } from '@/lib/types';
+import {
+  isPositioned,
+  type FormField,
+  type PageInfo,
+  type PositionedField,
+} from '@/lib/types';
 
-/** A field we know has a rectangle, so it can actually be drawn. */
-type PlacedField = FormField & { rect: NonNullable<FormField['rect']> };
+/** Movement below this is a click, not a drag. */
+const DRAG_THRESHOLD_PX = 3;
 
-/** Ignore accidental micro-drags when drawing a new field. */
-const MIN_DRAW_PX = 6;
+/** Smallest field a drag may produce, in CSS pixels. */
+const MIN_FIELD_PX = 8;
 
-/** Field kinds that open a text editor when clicked. */
-const TEXT_LIKE: FieldKind[] = ['text', 'choice'];
+/** The eight resize grips, positioned as fractions of the box. */
+const HANDLES = [
+  { id: 'nw', x: 0, y: 0 },
+  { id: 'n', x: 0.5, y: 0 },
+  { id: 'ne', x: 1, y: 0 },
+  { id: 'e', x: 1, y: 0.5 },
+  { id: 'se', x: 1, y: 1 },
+  { id: 's', x: 0.5, y: 1 },
+  { id: 'sw', x: 0, y: 1 },
+  { id: 'w', x: 0, y: 0.5 },
+] as const;
+
+type HandleId = (typeof HANDLES)[number]['id'];
 
 /**
  * Whether a field has nothing in it.
@@ -28,13 +44,7 @@ function isEmpty(field: FormField): boolean {
   return field.value === null || field.value === '' || field.value === 'Off';
 }
 
-interface ViewerProps {
-  /** When set, dragging on the page draws a new field of this kind. */
-  drawKind: FieldKind | null;
-  onDrawComplete: (rect: [number, number, number, number], pageIndex: number) => void;
-}
-
-export function Viewer({ drawKind, onDrawComplete }: ViewerProps) {
+export function Viewer() {
   const doc = useStore((s) => s.doc);
   const fields = useStore((s) => s.fields);
   const currentPage = useStore((s) => s.currentPage);
@@ -43,14 +53,13 @@ export function Viewer({ drawKind, onDrawComplete }: ViewerProps) {
   const renderingAvailable = useStore((s) => s.renderingAvailable);
   const setCurrentPage = useStore((s) => s.setCurrentPage);
   const selectField = useStore((s) => s.selectField);
-  const setPanel = useStore((s) => s.setPanel);
+  const clearFieldSelection = useStore((s) => s.clearFieldSelection);
   const setFieldValue = useStore((s) => s.setFieldValue);
+  const moveField = useStore((s) => s.moveField);
+  const setPanel = useStore((s) => s.setPanel);
   const nudgeZoom = useStore((s) => s.nudgeZoom);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
-  const [drawBox, setDrawBox] = useState<ScreenRect | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
 
   // Ctrl+wheel zooms instead of scrolling. This has to be a non-passive
@@ -63,8 +72,6 @@ export function Viewer({ drawKind, onDrawComplete }: ViewerProps) {
     function onWheel(event: WheelEvent) {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
-      // deltaY is negative when scrolling up (zoom in). The divisor turns one
-      // notch of roughly 100 units into a comfortable step.
       nudgeZoom(-event.deltaY / 500);
     }
 
@@ -72,17 +79,23 @@ export function Viewer({ drawKind, onDrawComplete }: ViewerProps) {
     return () => node.removeEventListener('wheel', onWheel);
   }, [nudgeZoom]);
 
-  // Changing page or entering draw mode should not strand an open editor.
+  // Changing page should not strand an open editor.
   useEffect(() => {
     setEditing(null);
-  }, [currentPage, drawKind]);
+  }, [currentPage]);
 
   if (!doc) {
     return (
       <main className="viewer viewer--empty">
         <div className="empty-state">
+          <div className="empty-state__mark" aria-hidden="true">
+            NXT<span>PDF</span>
+          </div>
           <h2>No document open</h2>
-          <p>Open a PDF or create a new one to get started.</p>
+          <p>View, reorganize, fill in forms, and print with full control.</p>
+          <p className="hint">
+            Press <kbd>Ctrl</kbd>+<kbd>O</kbd> to open a PDF, or use Open in the toolbar.
+          </p>
         </div>
       </main>
     );
@@ -99,90 +112,26 @@ export function Viewer({ drawKind, onDrawComplete }: ViewerProps) {
   const displayWidth = page.widthPt * scale;
   const displayHeight = page.heightPt * scale;
 
+  // The explicit predicate is required: TypeScript will not narrow through a
+  // compound condition on its own.
   const pageFields = fields.filter(
-    (field): field is PlacedField =>
-      field.pageIndex === currentPage && field.rect !== null
+    (field): field is PositionedField =>
+      field.pageIndex === currentPage && isPositioned(field)
   );
-
-  function pointerPosition(event: React.PointerEvent): { x: number; y: number } | null {
-    const surface = surfaceRef.current;
-    if (!surface) return null;
-    const bounds = surface.getBoundingClientRect();
-    return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-  }
-
-  function handlePointerDown(event: React.PointerEvent) {
-    if (!drawKind) return;
-    const position = pointerPosition(event);
-    if (!position) return;
-
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setDrawStart(position);
-    setDrawBox({ left: position.x, top: position.y, width: 0, height: 0 });
-  }
-
-  function handlePointerMove(event: React.PointerEvent) {
-    if (!drawStart) return;
-    const position = pointerPosition(event);
-    if (!position) return;
-
-    setDrawBox({
-      left: Math.min(drawStart.x, position.x),
-      top: Math.min(drawStart.y, position.y),
-      width: Math.abs(position.x - drawStart.x),
-      height: Math.abs(position.y - drawStart.y),
-    });
-  }
-
-  function handlePointerUp() {
-    const box = drawBox;
-    setDrawStart(null);
-    setDrawBox(null);
-
-    if (!box || !page) return;
-    if (box.width < MIN_DRAW_PX || box.height < MIN_DRAW_PX) return;
-
-    onDrawComplete(roundRect(screenRectToPdf(box, page, scale)), currentPage);
-  }
-
-  function handleFieldClick(event: React.MouseEvent, field: PlacedField) {
-    event.stopPropagation();
-
-    const toggle = event.ctrlKey || event.metaKey;
-    const range = event.shiftKey;
-    selectField(field.name, { toggle, range });
-
-    // Surface the field in the side panel so its properties are one glance
-    // away, rather than making the user find it in the list themselves.
-    setPanel('fields');
-
-    // A modified click is building a selection to act on, not opening an
-    // editor, so only a plain click starts editing.
-    if (toggle || range || field.readOnly) {
-      setEditing(null);
-      return;
-    }
-
-    if (field.kind === 'checkbox') {
-      const on = field.value !== null && field.value !== '' && field.value !== 'Off';
-      void setFieldValue(field.name, on ? 'Off' : 'On');
-      return;
-    }
-
-    setEditing(TEXT_LIKE.includes(field.kind) ? field.name : null);
-  }
 
   return (
     <main className="viewer">
       <div className="viewer__scroll" ref={scrollRef}>
         <div
-          ref={surfaceRef}
-          className={`page-surface${drawKind ? ' page-surface--drawing' : ''}`}
+          className="page-surface"
           style={{ width: displayWidth, height: displayHeight }}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
+          // Pressing bare page, rather than a field, drops the selection.
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) {
+              clearFieldSelection();
+              setEditing(null);
+            }
+          }}
         >
           {renderingAvailable ? (
             <img
@@ -200,41 +149,35 @@ export function Viewer({ drawKind, onDrawComplete }: ViewerProps) {
             </div>
           )}
 
-          {/* Existing form fields, positioned in PDF space. */}
-          {pageFields.map((field) => {
-            const box = pdfRectToScreen(field.rect, page, scale);
-
-            return (
-              <FieldOverlay
-                key={field.name}
-                field={field}
-                box={box}
-                selected={selectedFields.includes(field.name)}
-                editing={editing === field.name}
-                onClick={(event) => handleFieldClick(event, field)}
-                onCommit={(value) => {
-                  setEditing(null);
-                  if (value !== (field.value ?? '')) {
-                    void setFieldValue(field.name, value);
-                  }
-                }}
-                onCancel={() => setEditing(null)}
-              />
-            );
-          })}
-
-          {/* Live rubber band while drawing a new field. */}
-          {drawBox && (
-            <div
-              className="draw-box"
-              style={{
-                left: drawBox.left,
-                top: drawBox.top,
-                width: drawBox.width,
-                height: drawBox.height,
+          {pageFields.map((field) => (
+            <FieldOverlay
+              key={field.name}
+              field={field}
+              page={page}
+              scale={scale}
+              selected={selectedFields.includes(field.name)}
+              editing={editing === field.name}
+              onSelect={(modifiers) => {
+                selectField(field.name, modifiers);
+                setPanel('fields');
               }}
+              onEdit={() => {
+                if (!field.readOnly) setEditing(field.name);
+              }}
+              onToggle={() => {
+                const on = !isEmpty(field);
+                void setFieldValue(field.name, on ? 'Off' : 'On');
+              }}
+              onGeometryChange={(rect) => void moveField(field.name, rect)}
+              onCommit={(value) => {
+                setEditing(null);
+                if (value !== (field.value ?? '')) {
+                  void setFieldValue(field.name, value);
+                }
+              }}
+              onCancel={() => setEditing(null)}
             />
-          )}
+          ))}
         </div>
       </div>
 
@@ -260,31 +203,58 @@ export function Viewer({ drawKind, onDrawComplete }: ViewerProps) {
 }
 
 interface FieldOverlayProps {
-  field: PlacedField;
-  box: ScreenRect;
+  field: PositionedField;
+  page: PageInfo;
+  scale: number;
   selected: boolean;
   editing: boolean;
-  onClick: (event: React.MouseEvent) => void;
+  onSelect: (modifiers: { toggle: boolean; range: boolean }) => void;
+  onEdit: () => void;
+  onToggle: () => void;
+  onGeometryChange: (rect: [number, number, number, number]) => void;
   onCommit: (value: string) => void;
   onCancel: () => void;
 }
 
-/** One form field drawn over the page, editable in place. */
+/**
+ * One form field drawn over the page.
+ *
+ * Click selects it and reveals resize grips; dragging moves or resizes it;
+ * double-click edits its contents. A drag is previewed locally and written
+ * back only on release, so moving a field costs one command rather than one
+ * per pointer event.
+ */
 function FieldOverlay({
   field,
-  box,
+  page,
+  scale,
   selected,
   editing,
-  onClick,
+  onSelect,
+  onEdit,
+  onToggle,
+  onGeometryChange,
   onCommit,
   onCancel,
 }: FieldOverlayProps) {
+  const committed = pdfRectToScreen(field.rect, page, scale);
+
+  const [preview, setPreview] = useState<ScreenRect | null>(null);
   const [draft, setDraft] = useState(field.value ?? '');
   const inputRef = useRef<HTMLInputElement>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const selectRef = useRef<HTMLSelectElement>(null);
 
-  // Re-seed whenever editing opens or the backing value changes underneath.
+  // Tracks the in-flight gesture without re-rendering on every pointer move.
+  const gesture = useRef<{
+    handle: HandleId | null;
+    startX: number;
+    startY: number;
+    origin: ScreenRect;
+    latest: ScreenRect | null;
+    moved: boolean;
+  } | null>(null);
+
   useEffect(() => {
     if (editing) setDraft(field.value ?? '');
   }, [editing, field.value]);
@@ -296,6 +266,7 @@ function FieldOverlay({
     selectRef.current?.focus();
   }, [editing]);
 
+  const box = preview ?? committed;
   const style: React.CSSProperties = {
     left: box.left,
     top: box.top,
@@ -303,13 +274,14 @@ function FieldOverlay({
     height: box.height,
   };
 
+  // --- Editing ---------------------------------------------------------
+
   if (editing) {
-    // Fit the text to the box so the editor lines up with the printed result.
     const fontSize = Math.max(8, Math.min(box.height * 0.68, 20));
     const commit = () => onCommit(draft);
 
-    // Stop Delete and Ctrl+A reaching the global shortcut handler, which would
-    // otherwise delete the field the user is trying to type into.
+    // Stop Delete, arrows and Ctrl+A reaching the global shortcut handler,
+    // which would otherwise delete or move the field being typed into.
     const onKeyDown = (event: React.KeyboardEvent) => {
       event.stopPropagation();
       if (event.key === 'Escape') onCancel();
@@ -370,21 +342,127 @@ function FieldOverlay({
     );
   }
 
+  // --- Move and resize -------------------------------------------------
+
+  /** Applies a pointer delta to the box the gesture started from. */
+  function resized(
+    origin: ScreenRect,
+    handle: HandleId | null,
+    dx: number,
+    dy: number
+  ): ScreenRect {
+    if (handle === null) {
+      return { ...origin, left: origin.left + dx, top: origin.top + dy };
+    }
+
+    let { left, top, width, height } = origin;
+
+    // Dragging a west or north edge moves the origin as well as the size, and
+    // must stop before the box turns inside out.
+    if (handle.includes('w')) {
+      const clamped = Math.min(dx, width - MIN_FIELD_PX);
+      left += clamped;
+      width -= clamped;
+    }
+    if (handle.includes('e')) {
+      width = Math.max(MIN_FIELD_PX, width + dx);
+    }
+    if (handle.includes('n')) {
+      const clamped = Math.min(dy, height - MIN_FIELD_PX);
+      top += clamped;
+      height -= clamped;
+    }
+    if (handle.includes('s')) {
+      height = Math.max(MIN_FIELD_PX, height + dy);
+    }
+
+    return { left, top, width, height };
+  }
+
+  function beginGesture(event: React.PointerEvent, handle: HandleId | null) {
+    if (field.readOnly && handle !== null) return;
+
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    gesture.current = {
+      handle,
+      startX: event.clientX,
+      startY: event.clientY,
+      origin: committed,
+      latest: null,
+      moved: false,
+    };
+
+    // Select on press so the grips appear immediately, before any drag.
+    if (handle === null) {
+      onSelect({
+        toggle: event.ctrlKey || event.metaKey,
+        range: event.shiftKey,
+      });
+    }
+  }
+
+  function continueGesture(event: React.PointerEvent) {
+    const active = gesture.current;
+    if (!active) return;
+
+    const dx = event.clientX - active.startX;
+    const dy = event.clientY - active.startY;
+
+    if (!active.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+    active.moved = true;
+
+    const next = resized(active.origin, active.handle, dx, dy);
+    active.latest = next;
+    setPreview(next);
+  }
+
+  function endGesture(event: React.PointerEvent) {
+    const active = gesture.current;
+    gesture.current = null;
+    if (!active) return;
+
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setPreview(null);
+
+    if (!active.moved) {
+      // A plain click on a checkbox toggles it; other kinds just select.
+      if (active.handle === null && field.kind === 'checkbox' && !field.readOnly) {
+        onToggle();
+      }
+      return;
+    }
+
+    if (active.latest) {
+      onGeometryChange(roundRect(screenRectToPdf(active.latest, page, scale)));
+    }
+  }
+
   const classes = [
     'field-box',
     selected && 'field-box--selected',
     field.readOnly && 'field-box--readonly',
+    preview && 'field-box--dragging',
   ]
     .filter(Boolean)
     .join(' ');
 
   return (
-    <button
-      type="button"
+    <div
       className={classes}
       style={style}
       title={`${field.name} (${field.kind})${field.readOnly ? ' — read-only' : ''}`}
-      onClick={onClick}
+      onPointerDown={(event) => beginGesture(event, null)}
+      onPointerMove={continueGesture}
+      onPointerUp={endGesture}
+      onPointerCancel={endGesture}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+        if (field.kind !== 'checkbox') onEdit();
+      }}
     >
       {/*
         The name is a placeholder, not a label: once the field has a value the
@@ -392,6 +470,20 @@ function FieldOverlay({
         document.
       */}
       {isEmpty(field) && <span className="field-box__label">{field.name}</span>}
-    </button>
+
+      {selected &&
+        !field.readOnly &&
+        HANDLES.map((handle) => (
+          <span
+            key={handle.id}
+            className={`field-handle field-handle--${handle.id}`}
+            style={{ left: `${handle.x * 100}%`, top: `${handle.y * 100}%` }}
+            onPointerDown={(event) => beginGesture(event, handle.id)}
+            onPointerMove={continueGesture}
+            onPointerUp={endGesture}
+            onPointerCancel={endGesture}
+          />
+        ))}
+    </div>
   );
 }

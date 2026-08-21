@@ -68,6 +68,12 @@ export const setFormField = (name: string, value: string) =>
 export const createFormField = (field: NewField) =>
   invoke<DocumentInfo>('create_form_field', { field });
 
+export const setFormFieldRect = (name: string, rect: [number, number, number, number]) =>
+  invoke<DocumentInfo>('set_form_field_rect', { name, rect });
+
+export const setFormFieldFontSize = (name: string, size: number) =>
+  invoke<DocumentInfo>('set_form_field_font_size', { name, size });
+
 export const renameFormField = (name: string, newName: string) =>
   invoke<DocumentInfo>('rename_form_field', { name, newName });
 

@@ -54,7 +54,27 @@ export interface FormField {
   multiline: boolean;
   password: boolean;
   maxLength: number | null;
+  /** Text size in points. `0` means auto-size to fit the box. */
+  fontSize: number | null;
   options: string[];
+}
+
+/** A field that has a rectangle, so it can be drawn or copied. */
+export type PositionedField = FormField & {
+  rect: NonNullable<FormField['rect']>;
+};
+
+/** A field with both a rectangle and a page, so it can be moved. */
+export type PlacedField = PositionedField & {
+  pageIndex: number;
+};
+
+export function isPositioned(field: FormField): field is PositionedField {
+  return field.rect !== null;
+}
+
+export function isPlaced(field: FormField): field is PlacedField {
+  return field.rect !== null && field.pageIndex !== null;
 }
 
 export interface NewField {

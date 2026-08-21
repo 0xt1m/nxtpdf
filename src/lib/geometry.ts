@@ -103,6 +103,34 @@ export function screenRectToPdf(box: ScreenRect, page: PageInfo, scale: number):
   return [Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y)];
 }
 
+/**
+ * Converts a movement in screen space to the equivalent in PDF space.
+ *
+ * Screen y grows downward and PDF y grows upward, and a rotated page swaps the
+ * axes on top of that — so "nudge right" is only `+x` on an unrotated page.
+ */
+export function screenDeltaToPdf(
+  du: number,
+  dv: number,
+  page: PageInfo
+): { dx: number; dy: number } {
+  switch (page.rotation) {
+    case 90:
+      return { dx: dv, dy: -du };
+    case 180:
+      return { dx: -du, dy: dv };
+    case 270:
+      return { dx: -dv, dy: du };
+    default:
+      return { dx: du, dy: -dv };
+  }
+}
+
+/** Shifts a PDF rectangle by a PDF-space delta. */
+export function translateRect(rect: PdfRect, dx: number, dy: number): PdfRect {
+  return [rect[0] + dx, rect[1] + dy, rect[2] + dx, rect[3] + dy];
+}
+
 /** Rounds to 2dp so serialized rectangles stay readable. */
 export function roundRect(rect: PdfRect): PdfRect {
   return rect.map((value) => Math.round(value * 100) / 100) as PdfRect;

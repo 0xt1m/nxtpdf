@@ -102,7 +102,12 @@ export function Toolbar({ onPrint }: ToolbarProps) {
       <div className="toolbar__spacer" />
 
       <div className="toolbar__group">
-        <button className="button--primary" onClick={onPrint} disabled={!hasDoc || busy}>
+        <button
+          className="button--primary"
+          onClick={onPrint}
+          disabled={!hasDoc || busy}
+          title="Ctrl+P"
+        >
           Print…
         </button>
       </div>

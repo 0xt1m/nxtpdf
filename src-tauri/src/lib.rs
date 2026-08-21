@@ -72,6 +72,8 @@ pub fn run() {
             commands::list_form_fields,
             commands::set_form_field,
             commands::create_form_field,
+            commands::set_form_field_rect,
+            commands::set_form_field_font_size,
             commands::rename_form_field,
             commands::delete_form_field,
             commands::list_printers,

@@ -26,6 +26,14 @@ export function useKeyboardShortcuts(): void {
       const typing = isTextEntry(event.target);
       const accel = event.ctrlKey || event.metaKey;
 
+      // Escape closes the print dialog even when focus is inside one of its
+      // controls, which the typing guard below would otherwise swallow.
+      if (event.key === 'Escape' && state.printDialogOpen) {
+        event.preventDefault();
+        state.setPrintDialogOpen(false);
+        return;
+      }
+
       // --- Accelerated shortcuts ---
       if (accel) {
         switch (event.key.toLowerCase()) {
@@ -37,6 +45,28 @@ export function useKeyboardShortcuts(): void {
           case 'o':
             event.preventDefault();
             void openDocument();
+            return;
+
+          case 'p':
+            // Always preventDefault: the webview has its own Ctrl+P that would
+            // open the browser print dialog, which has no tray or duplex
+            // control and is exactly what this app exists to replace.
+            event.preventDefault();
+            if (state.doc) state.setPrintDialogOpen(true);
+            return;
+
+          case 'c':
+            // Only when fields are selected — otherwise leave Ctrl+C alone so
+            // copying text out of an input still works.
+            if (typing || state.selectedFields.length === 0) return;
+            event.preventDefault();
+            state.copySelectedFields();
+            return;
+
+          case 'v':
+            if (typing || state.clipboard.length === 0) return;
+            event.preventDefault();
+            void state.pasteFields();
             return;
 
           case 'a':
@@ -69,6 +99,25 @@ export function useKeyboardShortcuts(): void {
 
       // --- Unmodified keys ---
       if (typing) return;
+
+      // Arrow keys nudge the selected fields. One point is the smallest step
+      // that survives a round trip through the PDF; Shift makes it ten so a
+      // field can be moved across a page without a hundred keypresses.
+      const NUDGE: Record<string, [number, number]> = {
+        ArrowLeft: [-1, 0],
+        ArrowRight: [1, 0],
+        ArrowUp: [0, -1],
+        ArrowDown: [0, 1],
+      };
+
+      const nudge = NUDGE[event.key];
+      if (nudge) {
+        if (state.selectedFields.length === 0) return;
+        event.preventDefault();
+        const step = event.shiftKey ? 10 : 1;
+        void state.nudgeSelectedFields(nudge[0] * step, nudge[1] * step);
+        return;
+      }
 
       switch (event.key) {
         case 'Delete':

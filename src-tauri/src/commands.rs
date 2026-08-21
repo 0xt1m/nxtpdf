@@ -174,6 +174,28 @@ pub fn create_form_field(state: State<'_, AppState>, field: NewField) -> AppResu
     mutate(&state, |doc| forms::create_field(doc, &field))
 }
 
+/// Moves or resizes a field on its page. `rect` is `[x0, y0, x1, y1]` in PDF
+/// user space, origin bottom-left.
+#[tauri::command]
+pub fn set_form_field_rect(
+    state: State<'_, AppState>,
+    name: String,
+    rect: [f32; 4],
+) -> AppResult<DocumentInfo> {
+    mutate(&state, |doc| forms::set_field_rect(doc, &name, rect))
+}
+
+/// Sets a field's text size in points. `0` selects auto-sizing, where the
+/// viewer shrinks the text to fit the box.
+#[tauri::command]
+pub fn set_form_field_font_size(
+    state: State<'_, AppState>,
+    name: String,
+    size: f32,
+) -> AppResult<DocumentInfo> {
+    mutate(&state, |doc| forms::set_field_font_size(doc, &name, size))
+}
+
 /// Renames a field. `new_name` replaces the field's own name segment; any
 /// parent prefix is preserved.
 #[tauri::command]

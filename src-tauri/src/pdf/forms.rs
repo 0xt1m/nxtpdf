@@ -62,6 +62,9 @@ pub struct FormField {
     pub multiline: bool,
     pub password: bool,
     pub max_length: Option<i64>,
+    /// Text size in points. `Some(0.0)` means auto-size: the viewer shrinks
+    /// the text to fit the box. `None` means the field declares no appearance.
+    pub font_size: Option<f32>,
     /// Selectable values: choice options, or a checkbox/radio's "on" states.
     pub options: Vec<String>,
 }
@@ -178,6 +181,85 @@ fn encode_pdf_text(text: &str) -> Vec<u8> {
         }
         bytes
     }
+}
+
+/// The default-appearance string that governs a field's text.
+///
+/// `/DA` looks like `/Helv 12 Tf 0 g`: a font, a size, the `Tf` operator, then
+/// colour. A size of `0` is the spec's way of saying "auto-size to fit".
+fn appearance_string(doc: &Document, field_id: ObjectId) -> Option<String> {
+    let object = field_attr(doc, field_id, b"DA").or_else(|| {
+        // Fall back to the form-wide default when the field declares none.
+        let form = acro_form_dict(doc)?;
+        form.get(b"DA").ok().map(|value| resolve(doc, value).clone())
+    })?;
+
+    match object {
+        Object::String(bytes, _) => Some(decode_pdf_text(&bytes)),
+        _ => None,
+    }
+}
+
+fn font_size_from_appearance(appearance: &str) -> Option<f32> {
+    let tokens: Vec<&str> = appearance.split_whitespace().collect();
+    let operator = tokens.iter().position(|token| *token == "Tf")?;
+    // The size is the operand immediately before `Tf`.
+    tokens.get(operator.checked_sub(1)?)?.parse().ok()
+}
+
+/// Formats a size without a trailing `.0`, which keeps `/DA` tidy.
+fn format_size(size: f32) -> String {
+    if (size - size.round()).abs() < f32::EPSILON {
+        format!("{}", size.round() as i64)
+    } else {
+        format!("{size}")
+    }
+}
+
+/// Rewrites an appearance string with a new size, preserving font and colour.
+fn appearance_with_size(appearance: Option<&str>, size: f32) -> String {
+    if let Some(existing) = appearance {
+        let mut tokens: Vec<String> = existing.split_whitespace().map(String::from).collect();
+        if let Some(operator) = tokens.iter().position(|token| token == "Tf") {
+            if operator >= 1 {
+                tokens[operator - 1] = format_size(size);
+                return tokens.join(" ");
+            }
+        }
+    }
+    format!("/Helv {} Tf 0 g", format_size(size))
+}
+
+/// Sets a field's text size. `0.0` selects auto-sizing.
+pub fn set_field_font_size(doc: &mut Document, name: &str, size: f32) -> AppResult<()> {
+    if !(0.0..=144.0).contains(&size) {
+        return Err(AppError::InvalidInput(
+            "Font size must be between 0 (auto) and 144.".into(),
+        ));
+    }
+
+    let field_id = find_field(doc, name).ok_or_else(|| AppError::FieldNotFound(name.to_string()))?;
+    let updated = appearance_with_size(appearance_string(doc, field_id).as_deref(), size);
+
+    // Write it on the field and on every widget, since either may carry /DA.
+    let mut targets = field_widgets(doc, field_id);
+    if !targets.contains(&field_id) {
+        targets.push(field_id);
+    }
+
+    for target in targets {
+        if let Ok(dict) = doc.get_object_mut(target).and_then(Object::as_dict_mut) {
+            dict.set(
+                "DA",
+                Object::String(encode_pdf_text(&updated), StringFormat::Literal),
+            );
+            // The baked appearance no longer matches the requested size.
+            dict.remove(b"AP");
+        }
+    }
+
+    set_need_appearances(doc, true)?;
+    Ok(())
 }
 
 fn partial_name(doc: &Document, field_id: ObjectId) -> Option<String> {
@@ -434,6 +516,9 @@ fn collect_fields(
         multiline: kind == FieldKind::Text && flags & FLAG_MULTILINE != 0,
         password: kind == FieldKind::Text && flags & FLAG_PASSWORD != 0,
         max_length: field_attr(doc, field_id, b"MaxLen").and_then(|object| object.as_i64().ok()),
+        font_size: appearance_string(doc, field_id)
+            .as_deref()
+            .and_then(font_size_from_appearance),
         options,
     });
 }
@@ -913,6 +998,41 @@ fn checkbox_appearance(doc: &mut Document, size: f32, checked: bool) -> ObjectId
     doc.add_object(Object::Stream(stream))
 }
 
+/// Moves or resizes a field's widget.
+///
+/// `rect` is in PDF user space, origin bottom-left. Only the first widget is
+/// touched: a field with several widgets (a radio group) has no single
+/// position to set.
+pub fn set_field_rect(doc: &mut Document, name: &str, rect: [f32; 4]) -> AppResult<()> {
+    let [x0, y0, x1, y1] = rect;
+    if (x1 - x0).abs() < 1.0 || (y1 - y0).abs() < 1.0 {
+        return Err(AppError::InvalidInput(
+            "Field rectangle is too small to be usable.".into(),
+        ));
+    }
+
+    let field_id = find_field(doc, name).ok_or_else(|| AppError::FieldNotFound(name.to_string()))?;
+    let widget_id = field_widgets(doc, field_id).first().copied().ok_or_else(|| {
+        AppError::InvalidInput(format!("Field \"{name}\" has no widget to move."))
+    })?;
+
+    let dict = doc
+        .get_object_mut(widget_id)
+        .and_then(Object::as_dict_mut)
+        .map_err(AppError::Pdf)?;
+    dict.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(x0.min(x1)),
+            Object::Real(y0.min(y1)),
+            Object::Real(x0.max(x1)),
+            Object::Real(y0.max(y1)),
+        ]),
+    );
+
+    Ok(())
+}
+
 /// Renames a field.
 ///
 /// `new_partial_name` replaces the field's own `/T` entry. For a field nested
@@ -1159,6 +1279,82 @@ mod tests {
     fn renaming_an_unknown_field_errors() {
         let mut doc = blank().unwrap();
         assert!(rename_field(&mut doc, "nope", "x").is_err());
+    }
+
+    #[test]
+    fn moving_a_field_updates_its_rectangle() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("movable")).unwrap();
+
+        set_field_rect(&mut doc, "movable", [100.0, 100.0, 260.0, 124.0]).unwrap();
+
+        let rect = list_fields(&doc)[0].rect.unwrap();
+        assert_eq!(rect, [100.0, 100.0, 260.0, 124.0]);
+    }
+
+    #[test]
+    fn moving_normalizes_inverted_rectangles() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("movable")).unwrap();
+
+        // Corners given upper-right first should still store lower-left first.
+        set_field_rect(&mut doc, "movable", [260.0, 124.0, 100.0, 100.0]).unwrap();
+
+        let rect = list_fields(&doc)[0].rect.unwrap();
+        assert_eq!(rect, [100.0, 100.0, 260.0, 124.0]);
+    }
+
+    #[test]
+    fn moving_rejects_a_degenerate_rectangle() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("movable")).unwrap();
+        assert!(set_field_rect(&mut doc, "movable", [10.0, 10.0, 10.2, 10.2]).is_err());
+    }
+
+    #[test]
+    fn reads_font_size_from_an_appearance_string() {
+        assert_eq!(font_size_from_appearance("/Helv 12 Tf 0 g"), Some(12.0));
+        assert_eq!(font_size_from_appearance("/Helv 0 Tf 0 g"), Some(0.0));
+        assert_eq!(font_size_from_appearance("0 g"), None);
+        assert_eq!(font_size_from_appearance("Tf"), None);
+    }
+
+    #[test]
+    fn rewrites_size_but_keeps_font_and_colour() {
+        assert_eq!(
+            appearance_with_size(Some("/Arial 8 Tf 1 0 0 rg"), 14.0),
+            "/Arial 14 Tf 1 0 0 rg"
+        );
+    }
+
+    #[test]
+    fn builds_an_appearance_string_when_none_exists() {
+        assert_eq!(appearance_with_size(None, 11.0), "/Helv 11 Tf 0 g");
+    }
+
+    #[test]
+    fn zero_means_auto_size() {
+        assert_eq!(appearance_with_size(Some("/Helv 12 Tf 0 g"), 0.0), "/Helv 0 Tf 0 g");
+    }
+
+    #[test]
+    fn font_size_round_trips_through_a_field() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("sized")).unwrap();
+
+        set_field_font_size(&mut doc, "sized", 18.0).unwrap();
+        assert_eq!(list_fields(&doc)[0].font_size, Some(18.0));
+
+        set_field_font_size(&mut doc, "sized", 0.0).unwrap();
+        assert_eq!(list_fields(&doc)[0].font_size, Some(0.0));
+    }
+
+    #[test]
+    fn font_size_is_range_checked() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("sized")).unwrap();
+        assert!(set_field_font_size(&mut doc, "sized", -1.0).is_err());
+        assert!(set_field_font_size(&mut doc, "sized", 500.0).is_err());
     }
 
     #[test]

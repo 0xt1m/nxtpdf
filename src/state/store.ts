@@ -9,9 +9,59 @@
 
 import { create } from 'zustand';
 import * as ipc from '@/lib/ipc';
-import type { DocumentInfo, FormField, NewField } from '@/lib/types';
+import type { DocumentInfo, FieldKind, FormField, NewField } from '@/lib/types';
+import { isPlaced, isPositioned } from '@/lib/types';
+import type { PlacedField, PositionedField } from '@/lib/types';
+import { roundRect, screenDeltaToPdf, translateRect, type PdfRect } from '@/lib/geometry';
 
-export type SidePanel = 'fields' | 'design' | 'pages';
+export type SidePanel = 'fields' | 'pages';
+
+/** A field held on the in-app clipboard, ready to be pasted. */
+export interface ClipboardField {
+  kind: AddableKind;
+  rect: PdfRect;
+  multiline: boolean;
+  required: boolean;
+  maxLength: number | null;
+  fontSize: number | null;
+  options: string[];
+  value: string | null;
+}
+
+/** Field kinds the add buttons can create. */
+export type AddableKind = Extract<FieldKind, 'text' | 'checkbox' | 'choice'>;
+
+/** Default size in PDF points for each kind of new field. */
+const DEFAULT_SIZE: Record<AddableKind, { width: number; height: number }> = {
+  text: { width: 200, height: 22 },
+  checkbox: { width: 16, height: 16 },
+  choice: { width: 160, height: 22 },
+};
+
+/** Stem of the auto-generated name for each kind. */
+const DEFAULT_NAME: Record<AddableKind, string> = {
+  text: 'new_input',
+  checkbox: 'new_checkbox',
+  choice: 'new_dropdown',
+};
+
+/**
+ * First unused name of the form `new_input`, `new_input2`, `new_input3`...
+ *
+ * The first one carries no suffix, which reads better than `new_input1` when
+ * a form only ever gets one.
+ */
+/** Kinds the clipboard can round-trip; others have no create path. */
+const COPYABLE: AddableKind[] = ['text', 'checkbox', 'choice'];
+
+export function nextFieldName(kind: AddableKind, taken: string[]): string {
+  const base = DEFAULT_NAME[kind];
+  if (!taken.includes(base)) return base;
+
+  let suffix = 2;
+  while (taken.includes(`${base}${suffix}`)) suffix += 1;
+  return `${base}${suffix}`;
+}
 
 /**
  * Which selection the Delete key acts on.
@@ -37,14 +87,25 @@ interface AppState {
   busy: boolean;
   error: string | null;
   notice: string | null;
+  /** Lives here rather than in App so Ctrl+P can open it. */
+  printDialogOpen: boolean;
   /** Cleared if the backend reports PDFium failed to load at startup. */
   renderingAvailable: boolean;
+  /**
+   * Copied fields.
+   *
+   * This is an in-app clipboard rather than the system one: a PDF form field
+   * has no sensible text representation, and round-tripping it through the OS
+   * clipboard would lose everything but its name.
+   */
+  clipboard: ClipboardField[];
 
   // --- Actions ---
   setError: (message: string | null) => void;
   setNotice: (message: string | null) => void;
   setRenderingAvailable: (available: boolean) => void;
   setPanel: (panel: SidePanel) => void;
+  setPrintDialogOpen: (open: boolean) => void;
   setZoom: (zoom: number) => void;
   nudgeZoom: (delta: number) => void;
   setCurrentPage: (index: number) => void;
@@ -69,6 +130,14 @@ interface AppState {
   extractSelection: (path: string) => Promise<void>;
 
   setFieldValue: (name: string, value: string) => Promise<void>;
+  /** Adds a field to the current page at a free default position. */
+  addField: (kind: AddableKind) => Promise<void>;
+  setFieldFontSize: (name: string, size: number) => Promise<void>;
+  copySelectedFields: () => void;
+  pasteFields: () => Promise<void>;
+  moveField: (name: string, rect: [number, number, number, number]) => Promise<void>;
+  /** Moves every selected field by a screen-space delta, in points. */
+  nudgeSelectedFields: (du: number, dv: number) => Promise<void>;
   renameField: (name: string, newName: string) => Promise<void>;
   createField: (field: NewField) => Promise<void>;
   deleteSelectedFields: () => Promise<void>;
@@ -132,6 +201,8 @@ export const useStore = create<AppState>((set, get) => {
   // nothing renders from them.
   let pageAnchor: number | null = null;
   let fieldAnchor: string | null = null;
+  /** Grows with each paste so repeated Ctrl+V cascades instead of stacking. */
+  let pastesSinceCopy = 0;
 
   /**
    * Runs an async action with a busy flag and uniform error capture, so no
@@ -177,12 +248,15 @@ export const useStore = create<AppState>((set, get) => {
     busy: false,
     error: null,
     notice: null,
+    printDialogOpen: false,
     renderingAvailable: true,
+    clipboard: [],
 
     setError: (message) => set({ error: message }),
     setNotice: (message) => set({ notice: message }),
     setRenderingAvailable: (available) => set({ renderingAvailable: available }),
     setPanel: (panel) => set({ panel }),
+    setPrintDialogOpen: (open) => set({ printDialogOpen: open }),
 
     setZoom: (zoom) => set({ zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom)) }),
 
@@ -283,6 +357,7 @@ export const useStore = create<AppState>((set, get) => {
         set({
           doc: null,
           fields: [],
+          printDialogOpen: false,
           currentPage: 0,
           selectedPages: [],
           selectedFields: [],
@@ -381,6 +456,191 @@ export const useStore = create<AppState>((set, get) => {
             ? [...state.selectedFields.filter((item) => item !== name), renamed]
             : state.selectedFields,
         }));
+      });
+    },
+
+    addField: async (kind) => {
+      const { doc, currentPage, fields } = get();
+      const page = doc?.pages[currentPage];
+      if (!page) return;
+
+      // Field rectangles live in unrotated page space, so undo the swap that
+      // PageInfo applies for display.
+      const quarterTurned = page.rotation === 90 || page.rotation === 270;
+      const pageWidth = quarterTurned ? page.heightPt : page.widthPt;
+      const pageHeight = quarterTurned ? page.widthPt : page.heightPt;
+
+      const { width, height } = DEFAULT_SIZE[kind];
+
+      // Cascade down the page so repeated clicks do not stack fields exactly
+      // on top of each other, wrapping before running off the bottom.
+      const onThisPage = fields.filter((field) => field.pageIndex === currentPage).length;
+      const step = 30;
+      const margin = 54;
+      const usable = Math.max(1, Math.floor((pageHeight - margin * 2) / step));
+      const slot = onThisPage % usable;
+
+      const left = margin;
+      const top = pageHeight - margin - slot * step;
+
+      const rect: [number, number, number, number] = [
+        left,
+        Math.max(0, top - height),
+        Math.min(pageWidth - margin, left + width),
+        top,
+      ];
+
+      const name = nextFieldName(
+        kind,
+        fields.map((field) => field.name)
+      );
+
+      await run(async () => {
+        const updated = await ipc.createFormField({
+          pageIndex: currentPage,
+          name,
+          kind,
+          rect,
+          fontSize: kind === 'text' ? 10 : null,
+          multiline: false,
+          required: false,
+          maxLength: null,
+          options: kind === 'choice' ? ['Option 1', 'Option 2'] : [],
+        });
+        await adopt(updated);
+
+        // Select it and show the panel so it can be renamed straight away.
+        fieldAnchor = name;
+        set({ selectedFields: [name], focus: 'fields', panel: 'fields' });
+      });
+    },
+
+    nudgeSelectedFields: async (du, dv) => {
+      const { doc, fields, selectedFields } = get();
+      if (!doc || selectedFields.length === 0) return;
+
+      const moves = selectedFields
+        .map((name) => fields.find((field) => field.name === name))
+        .filter((field): field is PlacedField => field !== undefined && isPlaced(field))
+        .map((field) => {
+          const page = doc.pages[field.pageIndex];
+          if (!page) return null;
+          const { dx, dy } = screenDeltaToPdf(du, dv, page);
+          return { name: field.name, rect: translateRect(field.rect, dx, dy) };
+        })
+        .filter((move): move is { name: string; rect: PdfRect } => move !== null);
+
+      if (moves.length === 0) return;
+
+      await run(async () => {
+        let latest = null;
+        for (const move of moves) {
+          latest = await ipc.setFormFieldRect(move.name, roundRect(move.rect));
+        }
+        if (latest) await adopt(latest);
+      });
+    },
+
+    setFieldFontSize: async (name, size) => {
+      await run(async () => {
+        await adopt(await ipc.setFormFieldFontSize(name, size));
+      });
+    },
+
+    copySelectedFields: () => {
+      const { fields, selectedFields } = get();
+
+      const copied = selectedFields
+        .map((name) => fields.find((field) => field.name === name))
+        .filter(
+          (field): field is PositionedField => field !== undefined && isPositioned(field)
+        )
+        .filter((field) => COPYABLE.includes(field.kind as AddableKind))
+        .map<ClipboardField>((field) => ({
+          kind: field.kind as AddableKind,
+          rect: field.rect,
+          multiline: field.multiline,
+          required: field.required,
+          maxLength: field.maxLength,
+          fontSize: field.fontSize,
+          options: field.options,
+          value: field.value,
+        }));
+
+      if (copied.length === 0) return;
+
+      pastesSinceCopy = 0;
+      set({
+        clipboard: copied,
+        notice: `Copied ${copied.length} field${copied.length === 1 ? '' : 's'}.`,
+      });
+    },
+
+    pasteFields: async () => {
+      const { clipboard, doc, currentPage, fields } = get();
+      const page = doc?.pages[currentPage];
+      if (!page || clipboard.length === 0) return;
+
+      const quarterTurned = page.rotation === 90 || page.rotation === 270;
+      const pageWidth = quarterTurned ? page.heightPt : page.widthPt;
+      const pageHeight = quarterTurned ? page.widthPt : page.heightPt;
+
+      pastesSinceCopy += 1;
+      // Offset each paste so a repeated Ctrl+V builds a visible cascade rather
+      // than stacking copies exactly on top of one another.
+      const shift = 12 * pastesSinceCopy;
+
+      // Names have to be reserved up front: the snapshot only refreshes after
+      // each command, so two pastes in one batch would otherwise collide.
+      const taken = fields.map((field) => field.name);
+      const created: string[] = [];
+
+      await run(async () => {
+        let latest = null;
+
+        for (const item of clipboard) {
+          const width = item.rect[2] - item.rect[0];
+          const height = item.rect[3] - item.rect[1];
+
+          // Keep the copy on the page even when the original sat near an edge.
+          const left = Math.max(0, Math.min(item.rect[0] + shift, pageWidth - width));
+          const top = Math.max(height, Math.min(item.rect[3] - shift, pageHeight));
+
+          const name = nextFieldName(item.kind, [...taken, ...created]);
+          created.push(name);
+
+          latest = await ipc.createFormField({
+            pageIndex: currentPage,
+            name,
+            kind: item.kind,
+            rect: [left, top - height, left + width, top],
+            fontSize: item.fontSize,
+            multiline: item.multiline,
+            required: item.required,
+            maxLength: item.maxLength,
+            options: item.options,
+          });
+
+          if (item.value !== null && item.value !== '' && item.value !== 'Off') {
+            latest = await ipc.setFormField(name, item.value);
+          }
+        }
+
+        if (latest) await adopt(latest);
+
+        fieldAnchor = created[created.length - 1] ?? null;
+        set({
+          selectedFields: created,
+          focus: 'fields',
+          panel: 'fields',
+          notice: `Pasted ${created.length} field${created.length === 1 ? '' : 's'}.`,
+        });
+      });
+    },
+
+    moveField: async (name, rect) => {
+      await run(async () => {
+        await adopt(await ipc.setFormFieldRect(name, rect));
       });
     },
 

@@ -9,11 +9,11 @@
 /* ------------------------------------------------------------------ Tokens */
 
 :root {
-  --bg: #f2f4f7;
+  --bg: #f6f7f9;
   --bg-raised: #ffffff;
-  --bg-sunken: #e4e8ee;
-  --border: #d3d9e2;
-  --border-strong: #b6bfcd;
+  --bg-sunken: #eceff4;
+  --border: #dde2ea;
+  --border-strong: #bcc5d2;
 
   --text: #1a1e26;
   --text-muted: #626b7a;
@@ -27,14 +27,14 @@
   --field: rgba(47, 111, 235, 0.14);
   --field-border: rgba(47, 111, 235, 0.65);
 
-  --radius: 6px;
-  --radius-sm: 4px;
-  --shadow: 0 1px 2px rgba(16, 22, 34, 0.08), 0 4px 12px rgba(16, 22, 34, 0.06);
+  --radius: 8px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 2px rgba(16, 22, 34, 0.06), 0 8px 24px rgba(16, 22, 34, 0.08);
 
-  --toolbar-h: 48px;
-  --status-h: 26px;
-  --sidebar-w: 176px;
-  --panel-w: 320px;
+  --toolbar-h: 52px;
+  --status-h: 28px;
+  --sidebar-w: 184px;
+  --panel-w: 330px;
 
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --mono: 'Cascadia Mono', Consolas, 'SF Mono', monospace;
@@ -42,11 +42,11 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #171a20;
-    --bg-raised: #1f232b;
-    --bg-sunken: #12151a;
-    --border: #2e343f;
-    --border-strong: #444c5a;
+    --bg: #15181e;
+    --bg-raised: #1e222a;
+    --bg-sunken: #101318;
+    --border: #2b313b;
+    --border-strong: #414957;
 
     --text: #e6e9ef;
     --text-muted: #9aa3b2;
@@ -110,14 +110,21 @@ button {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 4px 10px;
+  padding: 5px 11px;
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 
 button:hover:not(:disabled) {
   border-color: var(--border-strong);
   background: var(--bg-sunken);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0.5px);
 }
 
 button:disabled {
@@ -468,8 +475,39 @@ textarea:disabled {
 }
 
 .empty-state {
+  max-width: 380px;
+  padding: 28px;
   text-align: center;
   color: var(--text-muted);
+}
+
+.empty-state__mark {
+  margin-bottom: 14px;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.empty-state__mark span {
+  color: var(--danger);
+}
+
+.empty-state h2 {
+  margin-bottom: 6px;
+  font-size: 17px;
+  color: var(--text);
+}
+
+kbd {
+  padding: 1px 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
 }
 
 .page-surface {
@@ -1087,4 +1125,132 @@ textarea:disabled {
   height: 100%;
   background: var(--accent);
   transition: width 0.2s ease-out;
+}
+
+/* ------------------------------------------------------ Add-a-field strip */
+
+.field-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.field-toolbar__label {
+  margin-right: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.field-toolbar__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.field-toolbar__glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 4px;
+}
+
+.field-toolbar__hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* -------------------------------------------------------- Field handles */
+
+.field-box {
+  /* The box is now a div rather than a button, so restore the basics. */
+  display: block;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: move;
+}
+
+.field-box--dragging {
+  /* Above its neighbours while being dragged, and clearly "in hand". */
+  z-index: 3;
+  opacity: 0.9;
+  box-shadow: 0 4px 14px rgba(16, 22, 34, 0.28);
+}
+
+.field-box--readonly {
+  cursor: not-allowed;
+}
+
+/*
+ * Resize grips. Centred on their corner or edge via a translate, so the
+ * percentage positions in the markup stay simple.
+ */
+.field-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  background: var(--bg-raised);
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  z-index: 4;
+}
+
+.field-handle--nw,
+.field-handle--se {
+  cursor: nwse-resize;
+}
+
+.field-handle--ne,
+.field-handle--sw {
+  cursor: nesw-resize;
+}
+
+.field-handle--n,
+.field-handle--s {
+  cursor: ns-resize;
+}
+
+.field-handle--e,
+.field-handle--w {
+  cursor: ew-resize;
+}
+
+/* ------------------------------------------------------ Field size control */
+
+.field-row__size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.field-row__size .checkbox {
+  margin-bottom: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.field-row__size-input {
+  width: 60px;
+  margin-left: auto;
+  text-align: right;
+}
+
+.field-row__size-unit {
+  font-size: 11px;
+  color: var(--text-muted);
 }

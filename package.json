@@ -21,8 +21,8 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"*.{json,md}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
     "rs:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml",
-    "rs:lint": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
-    "rs:test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "rs:lint": "cargo clippy --manifest-path src-tauri/Cargo.toml --target-dir target/verify --all-targets -- -D warnings",
+    "rs:test": "cargo test --manifest-path src-tauri/Cargo.toml --target-dir target/verify",
     "check": "pnpm typecheck && pnpm format:check && pnpm rs:fmt:check && pnpm rs:lint && pnpm rs:test",
     "version:set": "node scripts/set-version.mjs",
     "rs:fmt:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --check"

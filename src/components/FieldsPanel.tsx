@@ -86,19 +86,22 @@ function FieldRow({ field, busy, isSelected, onSelect }: FieldRowProps) {
   const renameField = useStore((s) => s.renameField);
   const setFieldFontSize = useStore((s) => s.setFieldFontSize);
 
-  // Local drafts so typing stays responsive; committed on blur, not per key.
-  const [draft, setDraft] = useState(field.value ?? '');
+  // The value draft is shared with the page overlay - the two edit the same
+  // field, so text typed here has to show up there as it is typed, and vice
+  // versa. Everything else on the row is local.
+  const sharedDraft = useStore((s) => s.fieldDraft);
+  const setSharedDraft = useStore((s) => s.setFieldDraft);
+
+  const draft =
+    sharedDraft?.name === field.name ? sharedDraft.value : (field.value ?? '');
+  const setDraft = (value: string) => setSharedDraft(field.name, value);
+
   const [nameDraft, setNameDraft] = useState(() => partialName(field.name));
   const rowRef = useRef<HTMLDivElement>(null);
 
   // A size of 0 is the PDF spec's way of saying "shrink text to fit the box".
   const isAutoSize = field.fontSize === 0;
   const [sizeDraft, setSizeDraft] = useState(() => field.fontSize ?? DEFAULT_POINT_SIZE);
-
-  // Re-sync when the backend snapshot changes underneath us.
-  useEffect(() => {
-    setDraft(field.value ?? '');
-  }, [field.value]);
 
   useEffect(() => {
     setNameDraft(partialName(field.name));

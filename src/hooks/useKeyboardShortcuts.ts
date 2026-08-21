@@ -161,6 +161,21 @@ export function useKeyboardShortcuts(): void {
         return;
       }
 
+      // Enter opens the selected field for typing, the same as double-clicking
+      // it. Only with exactly one selected - there is no sensible field to put
+      // the cursor in otherwise.
+      if (event.key === 'Enter' && state.editingField === null) {
+        if (state.selectedFields.length !== 1) return;
+
+        const name = state.selectedFields[0];
+        const field = state.fields.find((item) => item.name === name);
+        if (!name || !field || field.readOnly || field.kind === 'pushButton') return;
+
+        event.preventDefault();
+        state.editField(name);
+        return;
+      }
+
       switch (event.key) {
         case 'Delete':
         case 'Backspace':

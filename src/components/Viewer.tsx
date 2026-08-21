@@ -79,7 +79,13 @@ export function Viewer() {
    */
   const [scrollNode, setScrollNode] = useState<HTMLDivElement | null>(null);
   const pageNodes = useRef(new Map<number, HTMLDivElement>());
-  const [editing, setEditing] = useState<string | null>(null);
+  // Editing lives in the store, not here: Enter opens a field from the global
+  // shortcut handler, and Tab walks to the next one from inside the store.
+  const editing = useStore((s) => s.editingField);
+  const setEditing = useStore((s) => s.editField);
+  const fieldDraft = useStore((s) => s.fieldDraft);
+  const setFieldDraft = useStore((s) => s.setFieldDraft);
+  const editAdjacentField = useStore((s) => s.editAdjacentField);
 
   /** Set while we scroll programmatically, so it is not read back as intent. */
   const scrollingTo = useRef<number | null>(null);
@@ -379,6 +385,9 @@ export function Viewer() {
               )}
               selectedFields={selectedFields}
               editing={editing}
+              draft={fieldDraft}
+              onDraft={setFieldDraft}
+              onEditAdjacent={editAdjacentField}
               pendingField={pendingField !== null}
               register={(node) => {
                 if (node) pageNodes.current.set(page.index, node);
@@ -440,6 +449,9 @@ interface PageCanvasProps {
   fields: PositionedField[];
   selectedFields: string[];
   editing: string | null;
+  draft: { name: string; value: string } | null;
+  onDraft: (name: string, value: string) => void;
+  onEditAdjacent: (direction: 1 | -1) => Promise<void>;
   pendingField: boolean;
   register: (node: HTMLDivElement | null) => void;
   onClearSelection: () => void;
@@ -462,6 +474,9 @@ function PageCanvas({
   fields,
   selectedFields,
   editing,
+  draft,
+  onDraft,
+  onEditAdjacent,
   pendingField,
   register,
   onClearSelection,
@@ -579,6 +594,9 @@ function PageCanvas({
             scale={scale}
             selected={selectedFields.includes(field.name)}
             editing={editing === field.name}
+            draft={draft?.name === field.name ? draft.value : null}
+            onDraft={(value) => onDraft(field.name, value)}
+            onEditAdjacent={onEditAdjacent}
             inert={pendingField}
             onSelect={(modifiers) => onSelectField(field.name, modifiers)}
             onEdit={() => {
@@ -615,6 +633,10 @@ interface FieldOverlayProps {
   scale: number;
   selected: boolean;
   editing: boolean;
+  /** In-progress text for this field, or null when it is not being typed into. */
+  draft: string | null;
+  onDraft: (value: string) => void;
+  onEditAdjacent: (direction: 1 | -1) => Promise<void>;
   /** True while an Add tool is armed, so drawing passes straight through. */
   inert: boolean;
   onSelect: (modifiers: { toggle: boolean; range: boolean }) => void;
@@ -639,6 +661,9 @@ function FieldOverlay({
   scale,
   selected,
   editing,
+  draft,
+  onDraft,
+  onEditAdjacent,
   inert,
   onSelect,
   onEdit,
@@ -650,7 +675,10 @@ function FieldOverlay({
   const committed = pdfRectToScreen(field.rect, page, scale);
 
   const [preview, setPreview] = useState<ScreenRect | null>(null);
-  const [draft, setDraft] = useState(field.value ?? '');
+
+  // What the field reads as right now: the in-progress text if the user is
+  // typing anywhere, otherwise what the document holds.
+  const text = draft ?? field.value ?? '';
   const inputRef = useRef<HTMLInputElement>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const selectRef = useRef<HTMLSelectElement>(null);
@@ -663,10 +691,6 @@ function FieldOverlay({
     latest: ScreenRect | null;
     moved: boolean;
   } | null>(null);
-
-  useEffect(() => {
-    if (editing) setDraft(field.value ?? '');
-  }, [editing, field.value]);
 
   useEffect(() => {
     if (!editing) return;
@@ -685,7 +709,7 @@ function FieldOverlay({
 
   if (editing) {
     const fontSize = Math.max(8, Math.min(box.height * 0.68, 20));
-    const commit = () => onCommit(draft);
+    const commit = () => onCommit(text);
 
     // Stop Delete, arrows and Ctrl+A reaching the global shortcut handler,
     // which would otherwise delete or move the field being typed into.
@@ -693,6 +717,13 @@ function FieldOverlay({
       event.stopPropagation();
       if (event.key === 'Escape') onCancel();
       if (event.key === 'Enter' && !field.multiline) commit();
+
+      if (event.key === 'Tab') {
+        // The browser would move focus to some other control on the page.
+        // Walking the form is the only useful meaning of Tab here.
+        event.preventDefault();
+        void onEditAdjacent(event.shiftKey ? -1 : 1);
+      }
     };
 
     if (field.kind === 'choice') {
@@ -701,9 +732,9 @@ function FieldOverlay({
           ref={selectRef}
           className="field-editor"
           style={{ ...style, fontSize }}
-          value={draft}
+          value={text}
           onChange={(event) => {
-            setDraft(event.target.value);
+            onDraft(event.target.value);
             onCommit(event.target.value);
           }}
           onBlur={commit}
@@ -725,9 +756,9 @@ function FieldOverlay({
           ref={areaRef}
           className="field-editor"
           style={{ ...style, fontSize }}
-          value={draft}
+          value={text}
           maxLength={field.maxLength ?? undefined}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => onDraft(event.target.value)}
           onBlur={commit}
           onKeyDown={onKeyDown}
         />
@@ -740,9 +771,9 @@ function FieldOverlay({
         className="field-editor"
         style={{ ...style, fontSize }}
         type={field.password ? 'password' : 'text'}
-        value={draft}
+        value={text}
         maxLength={field.maxLength ?? undefined}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => onDraft(event.target.value)}
         onBlur={commit}
         onKeyDown={onKeyDown}
       />
@@ -871,7 +902,16 @@ function FieldOverlay({
         page already shows it, and printing the name over it just obscures the
         document.
       */}
-      {isEmpty(field) && <span className="field-box__label">{field.name}</span>}
+      {draft !== null && draft !== (field.value ?? '') ? (
+        /*
+          The page image behind this box still shows the committed value, so
+          text typed in the fields panel would otherwise not appear until it
+          was saved and re-rendered. Painting it here keeps the two in step.
+        */
+        <span className="field-box__draft">{draft}</span>
+      ) : (
+        isEmpty(field) && <span className="field-box__label">{field.name}</span>
+      )}
 
       {selected &&
         !field.readOnly &&

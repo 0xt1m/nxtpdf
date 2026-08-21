@@ -104,6 +104,23 @@ interface AppState {
   currentPage: number;
   selectedPages: number[];
   selectedFields: string[];
+  /**
+   * The field currently open for typing, if any.
+   *
+   * Lives here rather than in the viewer because Enter and Tab have to be able
+   * to open a field from outside it — from the global shortcut handler, and
+   * from the fields panel on the other side of the tree.
+   */
+  editingField: string | null;
+  /**
+   * Text being typed but not yet committed, and which field it belongs to.
+   *
+   * The page and the fields panel both edit the same value, so the in-progress
+   * text cannot live in either one — whichever the user is not typing into
+   * would go stale. Only one field can be typed into at a time, which is why a
+   * single entry is enough.
+   */
+  fieldDraft: { name: string; value: string } | null;
   focus: Focus;
   zoom: number;
   panel: SidePanel;
@@ -166,6 +183,17 @@ interface AppState {
   extractSelection: (path: string) => Promise<void>;
 
   setFieldValue: (name: string, value: string) => Promise<void>;
+  /** Opens a field for typing, or closes the open one when passed null. */
+  editField: (name: string | null) => void;
+  /** Records in-progress text without writing it to the document. */
+  setFieldDraft: (name: string, value: string) => void;
+  /**
+   * Moves editing to the next or previous field, committing the draft first.
+   *
+   * This is what Tab does. Read-only and push-button fields are skipped, since
+   * landing on one would strand the user with nothing to type into.
+   */
+  editAdjacentField: (direction: 1 | -1) => Promise<void>;
   setFieldFontSize: (name: string, size: number) => Promise<void>;
   copySelectedFields: () => void;
   pasteFields: () => Promise<void>;
@@ -296,6 +324,8 @@ export const useStore = create<AppState>((set, get) => {
     currentPage: 0,
     selectedPages: [],
     selectedFields: [],
+    editingField: null,
+    fieldDraft: null,
     focus: null,
     zoom: 1,
     panel: 'pages',
@@ -389,7 +419,15 @@ export const useStore = create<AppState>((set, get) => {
           await adopt(doc);
         } else {
           // Nothing open: the tab strip has to empty with it.
-          set({ doc: null, docs: [], fields: [], selectedPages: [], selectedFields: [] });
+          set({
+            doc: null,
+            docs: [],
+            fields: [],
+            selectedPages: [],
+            selectedFields: [],
+            editingField: null,
+            fieldDraft: null,
+          });
         }
       });
     },
@@ -399,7 +437,14 @@ export const useStore = create<AppState>((set, get) => {
         rememberView();
         // Reset the viewport before adopting: a new tab starts at page one
         // regardless of where the previous tab was scrolled to.
-        set({ currentPage: 0, selectedPages: [], selectedFields: [], focus: null });
+        set({
+          currentPage: 0,
+          selectedPages: [],
+          selectedFields: [],
+          editingField: null,
+          fieldDraft: null,
+          focus: null,
+        });
         await adopt(await ipc.newDocument());
       });
     },
@@ -411,6 +456,8 @@ export const useStore = create<AppState>((set, get) => {
           currentPage: 0,
           selectedPages: [],
           selectedFields: [],
+          editingField: null,
+          fieldDraft: null,
           focus: null,
           panel: 'pages',
         });
@@ -437,6 +484,8 @@ export const useStore = create<AppState>((set, get) => {
           ...(views.get(id) ?? { currentPage: 0, zoom: 1 }),
           selectedPages: [],
           selectedFields: [],
+          editingField: null,
+          fieldDraft: null,
           focus: null,
           pendingField: null,
         });
@@ -455,6 +504,8 @@ export const useStore = create<AppState>((set, get) => {
             ...(views.get(next.id) ?? { currentPage: 0, zoom: 1 }),
             selectedPages: [],
             selectedFields: [],
+            editingField: null,
+            fieldDraft: null,
             focus: null,
           });
           await adopt(next);
@@ -471,6 +522,8 @@ export const useStore = create<AppState>((set, get) => {
           currentPage: 0,
           selectedPages: [],
           selectedFields: [],
+          editingField: null,
+          fieldDraft: null,
           focus: null,
         });
       });
@@ -542,9 +595,54 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     setFieldValue: async (name, value) => {
+      // The draft has served its purpose once the value is on its way to the
+      // document; leaving it set would keep showing stale text over the page.
+      set((state) => (state.fieldDraft?.name === name ? { fieldDraft: null } : {}));
+
       await run(async () => {
         await adopt(await ipc.setFormField(name, value));
       });
+    },
+
+    editField: (name) =>
+      set((state) => ({
+        editingField: name,
+        // A draft belongs to the field being typed into. Carrying one across
+        // would spill half-typed text into the next field.
+        fieldDraft: state.fieldDraft?.name === name ? state.fieldDraft : null,
+        selectedFields: name === null ? state.selectedFields : [name],
+      })),
+
+    setFieldDraft: (name, value) => set({ fieldDraft: { name, value } }),
+
+    editAdjacentField: async (direction) => {
+      const state = get();
+      const current = state.editingField;
+      if (current === null) return;
+
+      const { fieldDraft, fields, setFieldValue, editField } = state;
+
+      // Tab commits, the same as clicking away would.
+      if (fieldDraft?.name === current) {
+        const field = fields.find((item) => item.name === current);
+        if (field && fieldDraft.value !== (field.value ?? '')) {
+          await setFieldValue(current, fieldDraft.value);
+        }
+      }
+
+      const reachable = fields.filter(
+        (field) => !field.readOnly && field.kind !== 'pushButton'
+      );
+      const at = reachable.findIndex((field) => field.name === current);
+      if (at === -1) {
+        editField(null);
+        return;
+      }
+
+      // Wrap, so Tab off the last field returns to the first rather than
+      // dead-ending.
+      const next = reachable[(at + direction + reachable.length) % reachable.length];
+      editField(next?.name ?? null);
     },
 
     renameField: async (name, newName) => {
@@ -764,6 +862,8 @@ export const useStore = create<AppState>((set, get) => {
         const count = selectedFields.length;
         set({
           selectedFields: [],
+          editingField: null,
+          fieldDraft: null,
           notice: `Deleted ${count} field${count === 1 ? '' : 's'}.`,
         });
       });

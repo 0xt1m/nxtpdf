@@ -859,6 +859,27 @@ textarea:disabled {
   text-overflow: ellipsis;
 }
 
+/*
+  Text typed in the fields panel, echoed onto the page.
+
+  The page image underneath still shows the last committed value, so this has
+  to be opaque - otherwise the old and new text overlap while typing.
+*/
+.field-box__draft {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  background: #fff;
+  font-size: 11px;
+  line-height: 1.15;
+  color: #000;
+  pointer-events: none;
+  white-space: pre;
+  overflow: hidden;
+}
+
 .field-handle {
   position: absolute;
   width: 9px;

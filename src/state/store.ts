@@ -69,6 +69,7 @@ interface AppState {
   extractSelection: (path: string) => Promise<void>;
 
   setFieldValue: (name: string, value: string) => Promise<void>;
+  renameField: (name: string, newName: string) => Promise<void>;
   createField: (field: NewField) => Promise<void>;
   deleteSelectedFields: () => Promise<void>;
 
@@ -358,6 +359,28 @@ export const useStore = create<AppState>((set, get) => {
     setFieldValue: async (name, value) => {
       await run(async () => {
         await adopt(await ipc.setFormField(name, value));
+      });
+    },
+
+    renameField: async (name, newName) => {
+      if (newName.trim() === name.split('.').pop()) return;
+
+      await run(async () => {
+        const doc = await ipc.renameFormField(name, newName);
+        await adopt(doc);
+
+        // Selection is keyed by name, so re-point it at the renamed field
+        // rather than silently dropping it.
+        const prefix = name.includes('.')
+          ? `${name.slice(0, name.lastIndexOf('.'))}.`
+          : '';
+        const renamed = `${prefix}${newName.trim()}`;
+        fieldAnchor = renamed;
+        set((state) => ({
+          selectedFields: state.selectedFields.includes(name)
+            ? [...state.selectedFields.filter((item) => item !== name), renamed]
+            : state.selectedFields,
+        }));
       });
     },
 

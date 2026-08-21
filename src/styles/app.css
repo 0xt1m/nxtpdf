@@ -685,6 +685,30 @@ textarea:disabled {
   overflow-wrap: anywhere;
 }
 
+/*
+ * The name doubles as a rename box. It reads as plain text until hovered or
+ * focused, so the row stays scannable but the affordance is discoverable.
+ */
+.field-row__name-input {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  font-weight: 600;
+  background: transparent;
+  border-color: transparent;
+}
+
+.field-row__name-input:hover:not(:disabled) {
+  background: var(--bg-raised);
+  border-color: var(--border);
+}
+
+.field-row__name-input:focus {
+  background: var(--bg-raised);
+  border-color: var(--accent);
+}
+
 .field-row__required {
   color: var(--danger);
   margin-left: 2px;

@@ -174,6 +174,17 @@ pub fn create_form_field(state: State<'_, AppState>, field: NewField) -> AppResu
     mutate(&state, |doc| forms::create_field(doc, &field))
 }
 
+/// Renames a field. `new_name` replaces the field's own name segment; any
+/// parent prefix is preserved.
+#[tauri::command]
+pub fn rename_form_field(
+    state: State<'_, AppState>,
+    name: String,
+    new_name: String,
+) -> AppResult<DocumentInfo> {
+    mutate(&state, |doc| forms::rename_field(doc, &name, &new_name))
+}
+
 #[tauri::command]
 pub fn delete_form_field(state: State<'_, AppState>, name: String) -> AppResult<DocumentInfo> {
     mutate(&state, |doc| forms::delete_field(doc, &name))

@@ -68,6 +68,9 @@ export const setFormField = (name: string, value: string) =>
 export const createFormField = (field: NewField) =>
   invoke<DocumentInfo>('create_form_field', { field });
 
+export const renameFormField = (name: string, newName: string) =>
+  invoke<DocumentInfo>('rename_form_field', { name, newName });
+
 export const deleteFormField = (name: string) =>
   invoke<DocumentInfo>('delete_form_field', { name });
 

@@ -913,6 +913,49 @@ fn checkbox_appearance(doc: &mut Document, size: f32, checked: bool) -> ObjectId
     doc.add_object(Object::Stream(stream))
 }
 
+/// Renames a field.
+///
+/// `new_partial_name` replaces the field's own `/T` entry. For a field nested
+/// under a parent the fully qualified name keeps its prefix, so renaming
+/// `address.city` to `town` yields `address.town`.
+pub fn rename_field(doc: &mut Document, name: &str, new_partial_name: &str) -> AppResult<()> {
+    let trimmed = new_partial_name.trim();
+
+    if trimmed.is_empty() {
+        return Err(AppError::InvalidInput("Field name cannot be empty.".into()));
+    }
+    if trimmed.contains('.') {
+        return Err(AppError::InvalidInput(
+            "Field names cannot contain '.' — it separates parent and child names.".into(),
+        ));
+    }
+
+    let field_id = find_field(doc, name).ok_or_else(|| AppError::FieldNotFound(name.to_string()))?;
+
+    // Preserve any parent prefix when checking for a collision.
+    let qualified = match name.rsplit_once('.') {
+        Some((prefix, _)) => format!("{prefix}.{trimmed}"),
+        None => trimmed.to_string(),
+    };
+
+    if qualified != name && list_fields(doc).iter().any(|field| field.name == qualified) {
+        return Err(AppError::InvalidInput(format!(
+            "A field named \"{qualified}\" already exists."
+        )));
+    }
+
+    let dict = doc
+        .get_object_mut(field_id)
+        .and_then(Object::as_dict_mut)
+        .map_err(AppError::Pdf)?;
+    dict.set(
+        "T",
+        Object::String(encode_pdf_text(trimmed), StringFormat::Literal),
+    );
+
+    Ok(())
+}
+
 /// Removes a field and every widget it owns.
 pub fn delete_field(doc: &mut Document, name: &str) -> AppResult<()> {
     let field_id =
@@ -1075,6 +1118,47 @@ mod tests {
 
         set_field_value(&mut doc, "agree", "Off").unwrap();
         assert_eq!(list_fields(&doc)[0].value.as_deref(), Some("Off"));
+    }
+
+    #[test]
+    fn renaming_a_field_changes_its_name() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("old_name")).unwrap();
+        set_field_value(&mut doc, "old_name", "keep me").unwrap();
+
+        rename_field(&mut doc, "old_name", "new_name").unwrap();
+
+        let fields = list_fields(&doc);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "new_name");
+        // Renaming must not disturb the value.
+        assert_eq!(fields[0].value.as_deref(), Some("keep me"));
+    }
+
+    #[test]
+    fn renaming_onto_an_existing_name_is_rejected() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("first")).unwrap();
+
+        let mut second = text_field("second");
+        second.rect = [72.0, 500.0, 300.0, 520.0];
+        create_field(&mut doc, &second).unwrap();
+
+        assert!(rename_field(&mut doc, "first", "second").is_err());
+    }
+
+    #[test]
+    fn renaming_rejects_empty_and_dotted_names() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("field")).unwrap();
+        assert!(rename_field(&mut doc, "field", "   ").is_err());
+        assert!(rename_field(&mut doc, "field", "a.b").is_err());
+    }
+
+    #[test]
+    fn renaming_an_unknown_field_errors() {
+        let mut doc = blank().unwrap();
+        assert!(rename_field(&mut doc, "nope", "x").is_err());
     }
 
     #[test]

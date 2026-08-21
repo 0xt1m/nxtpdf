@@ -18,6 +18,16 @@ const MIN_DRAW_PX = 6;
 /** Field kinds that open a text editor when clicked. */
 const TEXT_LIKE: FieldKind[] = ['text', 'choice'];
 
+/**
+ * Whether a field has nothing in it.
+ *
+ * Checkboxes and radios read as empty in their `/Off` state, which is what a
+ * PDF stores rather than an empty string.
+ */
+function isEmpty(field: FormField): boolean {
+  return field.value === null || field.value === '' || field.value === 'Off';
+}
+
 interface ViewerProps {
   /** When set, dragging on the page draws a new field of this kind. */
   drawKind: FieldKind | null;
@@ -33,6 +43,7 @@ export function Viewer({ drawKind, onDrawComplete }: ViewerProps) {
   const renderingAvailable = useStore((s) => s.renderingAvailable);
   const setCurrentPage = useStore((s) => s.setCurrentPage);
   const selectField = useStore((s) => s.selectField);
+  const setPanel = useStore((s) => s.setPanel);
   const setFieldValue = useStore((s) => s.setFieldValue);
   const nudgeZoom = useStore((s) => s.nudgeZoom);
 
@@ -140,6 +151,10 @@ export function Viewer({ drawKind, onDrawComplete }: ViewerProps) {
     const toggle = event.ctrlKey || event.metaKey;
     const range = event.shiftKey;
     selectField(field.name, { toggle, range });
+
+    // Surface the field in the side panel so its properties are one glance
+    // away, rather than making the user find it in the list themselves.
+    setPanel('fields');
 
     // A modified click is building a selection to act on, not opening an
     // editor, so only a plain click starts editing.
@@ -371,7 +386,12 @@ function FieldOverlay({
       title={`${field.name} (${field.kind})${field.readOnly ? ' — read-only' : ''}`}
       onClick={onClick}
     >
-      <span className="field-box__label">{field.name}</span>
+      {/*
+        The name is a placeholder, not a label: once the field has a value the
+        page already shows it, and printing the name over it just obscures the
+        document.
+      */}
+      {isEmpty(field) && <span className="field-box__label">{field.name}</span>}
     </button>
   );
 }

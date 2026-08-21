@@ -42,6 +42,8 @@ signing/
 !*.key.pub
 
 # ---- Logs & scratch ----
+# Screenshots captured from the running app for review; not project assets.
+/nxtpdf-*.png
 *.log
 npm-debug.log*
 pnpm-debug.log*

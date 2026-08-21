@@ -55,7 +55,24 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # tauri-build reads tauri.conf.json, which points at ../dist.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # tauri-build validates everything tauri.conf.json declares, including
+      # the bundled PDFium resource. Without it the build script fails before
+      # a single line of Rust is compiled, so this job has to install the same
+      # dependencies a real build does rather than faking a frontend.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # tauri.conf.json points frontendDist at ../dist, which only exists
+      # after a frontend build. Compiling Rust does not need its contents.
       - name: Create frontend dist placeholder
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null

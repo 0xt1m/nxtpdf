@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { defaultFieldSize, useStore } from '@/state/store';
 import { pageImageUrl, VIEWER_DPI } from '@/lib/pageImage';
@@ -48,6 +48,10 @@ function isEmpty(field: FormField): boolean {
   return field.value === null || field.value === '' || field.value === 'Off';
 }
 
+/**
+ * The document view: every page stacked vertically and scrolled continuously,
+ * the way a reader expects rather than one page at a time.
+ */
 export function Viewer() {
   const doc = useStore((s) => s.doc);
   const fields = useStore((s) => s.fields);
@@ -65,40 +69,148 @@ export function Viewer() {
   const pendingField = useStore((s) => s.pendingField);
   const placeArmedField = useStore((s) => s.placeArmedField);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const surfaceRef = useRef<HTMLDivElement>(null);
+  /**
+   * A callback ref, not `useRef`.
+   *
+   * The scroll container only exists once a document is open, so a `useRef`
+   * read inside an effect that runs on mount finds `null` and never retries —
+   * which is exactly why Ctrl+scroll silently did nothing. Storing the node in
+   * state re-runs the effect the moment it appears.
+   */
+  const [scrollNode, setScrollNode] = useState<HTMLDivElement | null>(null);
+  const pageNodes = useRef(new Map<number, HTMLDivElement>());
   const [editing, setEditing] = useState<string | null>(null);
-  const [drawBox, setDrawBox] = useState<ScreenRect | null>(null);
-  const drawStart = useRef<{ x: number; y: number } | null>(null);
 
-  // Ctrl+wheel zooms instead of scrolling. This has to be a non-passive
-  // listener: React attaches wheel handlers passively, and a passive listener
-  // cannot call preventDefault, so the page would zoom *and* scroll.
+  /** Set while we scroll programmatically, so it is not read back as intent. */
+  const scrollingTo = useRef<number | null>(null);
+
+  /**
+   * Where the cursor was when a zoom started, so that point can be put back
+   * under the cursor once the new scale has been laid out.
+   */
+  const zoomAnchor = useRef<{
+    /** Cursor position in content coordinates, before the zoom. */
+    contentX: number;
+    contentY: number;
+    /** Cursor position within the viewport, which must not move. */
+    viewportX: number;
+    viewportY: number;
+    from: number;
+  } | null>(null);
+
+  // Ctrl+wheel zooms instead of scrolling. The listener has to be non-passive:
+  // React attaches wheel handlers passively, and a passive listener cannot
+  // preventDefault, so the page would zoom *and* scroll.
   useEffect(() => {
-    const node = scrollRef.current;
-    if (!node) return;
+    if (!scrollNode) return;
+
+    // Captured once, so the handler needs no non-null assertions.
+    const node = scrollNode;
 
     function onWheel(event: WheelEvent) {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
+
+      const bounds = node.getBoundingClientRect();
+      const viewportX = event.clientX - bounds.left;
+      const viewportY = event.clientY - bounds.top;
+
+      zoomAnchor.current = {
+        contentX: node.scrollLeft + viewportX,
+        contentY: node.scrollTop + viewportY,
+        viewportX,
+        viewportY,
+        // Read live rather than closing over `zoom`, so the effect does not
+        // have to re-attach the listener on every zoom step.
+        from: useStore.getState().zoom,
+      };
+
       nudgeZoom(-event.deltaY / 500);
     }
 
     node.addEventListener('wheel', onWheel, { passive: false });
     return () => node.removeEventListener('wheel', onWheel);
-  }, [nudgeZoom]);
+  }, [scrollNode, nudgeZoom]);
 
-  // Changing page — or tab — should not strand an open editor. Switching tabs
-  // can leave `currentPage` unchanged, so the document id has to be watched
-  // too, or an editor could reopen on a same-named field in the new document.
+  // Keep the point under the cursor pinned across a zoom.
+  //
+  // Content scales about its own origin, so a point at `contentX` moves to
+  // `contentX * ratio`; scrolling by the difference puts it back under the
+  // cursor. This is a layout effect so the correction lands in the same frame
+  // as the resize — in a plain effect the view visibly jumps first.
+  useLayoutEffect(() => {
+    const anchor = zoomAnchor.current;
+    if (!anchor || !scrollNode) return;
+    zoomAnchor.current = null;
+
+    const ratio = zoom / anchor.from;
+    if (ratio === 1) return;
+
+    scrollNode.scrollLeft = anchor.contentX * ratio - anchor.viewportX;
+    scrollNode.scrollTop = anchor.contentY * ratio - anchor.viewportY;
+  }, [zoom, scrollNode]);
+
+  // Whichever page covers most of the viewport is the current one. That drives
+  // the pager, the Add strip's target, and the thumbnail highlight.
   useEffect(() => {
-    setEditing(null);
-  }, [currentPage, doc?.id]);
+    if (!scrollNode || !doc) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+
+        const index = Number((visible.target as HTMLElement).dataset.page);
+        if (Number.isNaN(index)) return;
+
+        // Ignore readings while a programmatic scroll is still travelling,
+        // or the intermediate pages would steal the selection.
+        if (scrollingTo.current !== null && scrollingTo.current !== index) return;
+        scrollingTo.current = null;
+
+        setCurrentPage(index);
+      },
+      { root: scrollNode, threshold: [0.1, 0.5, 0.9] }
+    );
+
+    for (const node of pageNodes.current.values()) observer.observe(node);
+    return () => observer.disconnect();
+  }, [scrollNode, doc, setCurrentPage]);
+
+  /** Brings a page into view; used by the pager and the thumbnail list. */
+  const scrollToPage = useCallback((index: number) => {
+    const node = pageNodes.current.get(index);
+    if (!node) return;
+    scrollingTo.current = index;
+    node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  // Selecting a page elsewhere — a thumbnail, a field in the panel — should
+  // bring it into view here, but only when it is actually off screen.
+  useEffect(() => {
+    if (scrollingTo.current !== null) return;
+
+    const node = pageNodes.current.get(currentPage);
+    if (!node || !scrollNode) return;
+
+    const pageBox = node.getBoundingClientRect();
+    const viewBox = scrollNode.getBoundingClientRect();
+    if (pageBox.bottom < viewBox.top || pageBox.top > viewBox.bottom) {
+      scrollToPage(currentPage);
+    }
+  }, [currentPage, scrollNode, scrollToPage]);
 
   // Arming a tool cancels any in-progress edit; they are different modes.
   useEffect(() => {
     if (pendingField) setEditing(null);
   }, [pendingField]);
+
+  // Switching document must not leave an editor open on a same-named field.
+  useEffect(() => {
+    setEditing(null);
+  }, [doc?.id]);
 
   if (!doc) {
     return (
@@ -117,25 +229,126 @@ export function Viewer() {
     );
   }
 
-  const page: PageInfo | undefined = doc.pages[currentPage];
-  if (!page) {
-    return <main className="viewer viewer--empty" />;
-  }
+  return (
+    <main className="viewer">
+      <div className="viewer__scroll" ref={setScrollNode}>
+        <div className="viewer__pages">
+          {doc.pages.map((page) => (
+            <PageCanvas
+              key={page.index}
+              page={page}
+              documentId={doc.id}
+              revision={doc.revision}
+              zoom={zoom}
+              renderingAvailable={renderingAvailable}
+              fields={fields.filter(
+                (field): field is PositionedField =>
+                  field.pageIndex === page.index && isPositioned(field)
+              )}
+              selectedFields={selectedFields}
+              editing={editing}
+              pendingField={pendingField !== null}
+              register={(node) => {
+                if (node) pageNodes.current.set(page.index, node);
+                else pageNodes.current.delete(page.index);
+              }}
+              onClearSelection={() => {
+                clearFieldSelection();
+                setEditing(null);
+              }}
+              onSelectField={(name, modifiers) => {
+                selectField(name, modifiers);
+                setPanel('fields');
+              }}
+              onEditField={(name) => setEditing(name)}
+              onToggleField={(field) =>
+                void setFieldValue(field.name, isEmpty(field) ? 'On' : 'Off')
+              }
+              onMoveField={(name, rect) => void moveField(name, rect)}
+              onCommitField={(field, value) => {
+                setEditing(null);
+                if (value !== (field.value ?? '')) void setFieldValue(field.name, value);
+              }}
+              onCancelEdit={() => setEditing(null)}
+              onDraw={(rect) => void placeArmedField(page.index, rect)}
+            />
+          ))}
+        </div>
+      </div>
 
-  // CSS pixels per PDF point. The image is rasterized at VIEWER_DPI and then
-  // scaled down by CSS, which keeps it sharp on HiDPI displays.
-  const scale = zoom;
-  const displayWidth = page.widthPt * scale;
-  const displayHeight = page.heightPt * scale;
-
-  // The explicit predicate is required: TypeScript will not narrow through a
-  // compound condition on its own.
-  const pageFields = fields.filter(
-    (field): field is PositionedField =>
-      field.pageIndex === currentPage && isPositioned(field)
+      <nav className="viewer__pager">
+        <button
+          onClick={() => scrollToPage(currentPage - 1)}
+          disabled={currentPage === 0}
+        >
+          <ChevronLeft size={15} />
+          Prev
+        </button>
+        <span>
+          Page {currentPage + 1} of {doc.pageCount}
+        </span>
+        <button
+          onClick={() => scrollToPage(currentPage + 1)}
+          disabled={currentPage >= doc.pageCount - 1}
+        >
+          Next
+          <ChevronRight size={15} />
+        </button>
+      </nav>
+    </main>
   );
+}
 
-  /** Pointer position relative to the page surface, in CSS pixels. */
+interface PageCanvasProps {
+  page: PageInfo;
+  documentId: number;
+  revision: number;
+  zoom: number;
+  renderingAvailable: boolean;
+  fields: PositionedField[];
+  selectedFields: string[];
+  editing: string | null;
+  pendingField: boolean;
+  register: (node: HTMLDivElement | null) => void;
+  onClearSelection: () => void;
+  onSelectField: (name: string, modifiers: { toggle: boolean; range: boolean }) => void;
+  onEditField: (name: string) => void;
+  onToggleField: (field: PositionedField) => void;
+  onMoveField: (name: string, rect: [number, number, number, number]) => void;
+  onCommitField: (field: PositionedField, value: string) => void;
+  onCancelEdit: () => void;
+  onDraw: (rect: [number, number, number, number]) => void;
+}
+
+/** One page of the document, with its fields drawn over it. */
+function PageCanvas({
+  page,
+  documentId,
+  revision,
+  zoom,
+  renderingAvailable,
+  fields,
+  selectedFields,
+  editing,
+  pendingField,
+  register,
+  onClearSelection,
+  onSelectField,
+  onEditField,
+  onToggleField,
+  onMoveField,
+  onCommitField,
+  onCancelEdit,
+  onDraw,
+}: PageCanvasProps) {
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const [drawBox, setDrawBox] = useState<ScreenRect | null>(null);
+  const drawStart = useRef<{ x: number; y: number } | null>(null);
+
+  // CSS pixels per PDF point. The image is rasterized at VIEWER_DPI and scaled
+  // down by CSS, which keeps it sharp on HiDPI displays.
+  const scale = zoom;
+
   function surfacePoint(event: React.PointerEvent) {
     const surface = surfaceRef.current;
     if (!surface) return null;
@@ -172,7 +385,7 @@ export function Viewer() {
     drawStart.current = null;
     setDrawBox(null);
 
-    if (!start || !box || !page || !pendingField) return;
+    if (!start || !box || !pendingField) return;
 
     // A click without a meaningful drag still places a field, at the default
     // size for its kind — insisting on a drag would just be pedantic.
@@ -182,120 +395,85 @@ export function Viewer() {
         : {
             left: start.x,
             top: start.y,
-            width: defaultFieldSize(pendingField).width * scale,
-            height: defaultFieldSize(pendingField).height * scale,
+            width: defaultFieldSize('text').width * scale,
+            height: defaultFieldSize('text').height * scale,
           };
 
-    void placeArmedField(currentPage, roundRect(screenRectToPdf(drawn, page, scale)));
-  }
-
-  function cancelDraw() {
-    drawStart.current = null;
-    setDrawBox(null);
+    onDraw(roundRect(screenRectToPdf(drawn, page, scale)));
   }
 
   return (
-    <main className="viewer">
-      <div className="viewer__scroll" ref={scrollRef}>
-        <div
-          ref={surfaceRef}
-          className={`page-surface${pendingField ? ' page-surface--drawing' : ''}`}
-          style={{ width: displayWidth, height: displayHeight }}
-          onPointerDown={(event) => {
-            if (pendingField) {
-              beginDraw(event);
-              return;
-            }
-            // Pressing bare page, rather than a field, drops the selection.
-            if (event.target === event.currentTarget) {
-              clearFieldSelection();
-              setEditing(null);
-            }
-          }}
-          onPointerMove={continueDraw}
-          onPointerUp={finishDraw}
-          onPointerCancel={cancelDraw}
-        >
-          {renderingAvailable ? (
-            <img
-              className="page-surface__image"
-              src={pageImageUrl(doc.id, currentPage, VIEWER_DPI, doc.revision)}
-              alt={`Page ${currentPage + 1}`}
-              draggable={false}
-            />
-          ) : (
-            <div className="page-surface__placeholder">
-              <p>Page rendering is unavailable.</p>
-              <p className="hint">
-                PDFium did not load. Run <code>pnpm setup:pdfium</code> and restart.
-              </p>
-            </div>
-          )}
+    <div className="page-slot" data-page={page.index} ref={register}>
+      <div
+        ref={surfaceRef}
+        className={`page-surface${pendingField ? ' page-surface--drawing' : ''}`}
+        style={{ width: page.widthPt * scale, height: page.heightPt * scale }}
+        onPointerDown={(event) => {
+          if (pendingField) {
+            beginDraw(event);
+            return;
+          }
+          if (event.target === event.currentTarget) onClearSelection();
+        }}
+        onPointerMove={continueDraw}
+        onPointerUp={finishDraw}
+        onPointerCancel={() => {
+          drawStart.current = null;
+          setDrawBox(null);
+        }}
+      >
+        {renderingAvailable ? (
+          <img
+            className="page-surface__image"
+            src={pageImageUrl(documentId, page.index, VIEWER_DPI, revision)}
+            alt={`Page ${page.index + 1}`}
+            loading="lazy"
+            draggable={false}
+          />
+        ) : (
+          <div className="page-surface__placeholder">
+            <p>Page rendering is unavailable.</p>
+            <p className="hint">
+              PDFium did not load. Run <code>pnpm setup:pdfium</code> and restart.
+            </p>
+          </div>
+        )}
 
-          {pageFields.map((field) => (
-            <FieldOverlay
-              key={field.name}
-              field={field}
-              page={page}
-              scale={scale}
-              selected={selectedFields.includes(field.name)}
-              editing={editing === field.name}
-              inert={pendingField !== null}
-              onSelect={(modifiers) => {
-                selectField(field.name, modifiers);
-                setPanel('fields');
-              }}
-              onEdit={() => {
-                if (!field.readOnly) setEditing(field.name);
-              }}
-              onToggle={() => {
-                const on = !isEmpty(field);
-                void setFieldValue(field.name, on ? 'Off' : 'On');
-              }}
-              onGeometryChange={(rect) => void moveField(field.name, rect)}
-              onCommit={(value) => {
-                setEditing(null);
-                if (value !== (field.value ?? '')) {
-                  void setFieldValue(field.name, value);
-                }
-              }}
-              onCancel={() => setEditing(null)}
-            />
-          ))}
-          {drawBox && (
-            <div
-              className="draw-box"
-              style={{
-                left: drawBox.left,
-                top: drawBox.top,
-                width: drawBox.width,
-                height: drawBox.height,
-              }}
-            />
-          )}
-        </div>
+        {fields.map((field) => (
+          <FieldOverlay
+            key={field.name}
+            field={field}
+            page={page}
+            scale={scale}
+            selected={selectedFields.includes(field.name)}
+            editing={editing === field.name}
+            inert={pendingField}
+            onSelect={(modifiers) => onSelectField(field.name, modifiers)}
+            onEdit={() => {
+              if (!field.readOnly) onEditField(field.name);
+            }}
+            onToggle={() => onToggleField(field)}
+            onGeometryChange={(rect) => onMoveField(field.name, rect)}
+            onCommit={(value) => onCommitField(field, value)}
+            onCancel={onCancelEdit}
+          />
+        ))}
+
+        {drawBox && (
+          <div
+            className="draw-box"
+            style={{
+              left: drawBox.left,
+              top: drawBox.top,
+              width: drawBox.width,
+              height: drawBox.height,
+            }}
+          />
+        )}
       </div>
 
-      <nav className="viewer__pager">
-        <button
-          onClick={() => setCurrentPage(currentPage - 1)}
-          disabled={currentPage === 0}
-        >
-          <ChevronLeft size={15} />
-          Prev
-        </button>
-        <span>
-          Page {currentPage + 1} of {doc.pageCount}
-        </span>
-        <button
-          onClick={() => setCurrentPage(currentPage + 1)}
-          disabled={currentPage >= doc.pageCount - 1}
-        >
-          Next
-          <ChevronRight size={15} />
-        </button>
-      </nav>
-    </main>
+      <span className="page-slot__number">{page.index + 1}</span>
+    </div>
   );
 }
 
@@ -345,7 +523,6 @@ function FieldOverlay({
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const selectRef = useRef<HTMLSelectElement>(null);
 
-  // Tracks the in-flight gesture without re-rendering on every pointer move.
   const gesture = useRef<{
     handle: HandleId | null;
     startX: number;
@@ -373,8 +550,6 @@ function FieldOverlay({
     width: box.width,
     height: box.height,
   };
-
-  // --- Editing ---------------------------------------------------------
 
   if (editing) {
     const fontSize = Math.max(8, Math.min(box.height * 0.68, 20));
@@ -442,8 +617,6 @@ function FieldOverlay({
     );
   }
 
-  // --- Move and resize -------------------------------------------------
-
   /** Applies a pointer delta to the box the gesture started from. */
   function resized(
     origin: ScreenRect,
@@ -494,12 +667,8 @@ function FieldOverlay({
       moved: false,
     };
 
-    // Select on press so the grips appear immediately, before any drag.
     if (handle === null) {
-      onSelect({
-        toggle: event.ctrlKey || event.metaKey,
-        range: event.shiftKey,
-      });
+      onSelect({ toggle: event.ctrlKey || event.metaKey, range: event.shiftKey });
     }
   }
 

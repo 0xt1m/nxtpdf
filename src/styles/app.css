@@ -536,16 +536,34 @@ textarea:disabled {
     box-shadow 0.13s ease;
 }
 
+/*
+ * Hover thickens the ring rather than recolouring it.
+ *
+ * A plain `.thumbnail:hover` rule outranks `.thumbnail--current` on
+ * specificity, so hovering the current page used to replace its accent ring
+ * with a grey one — which reads as the border vanishing exactly when you point
+ * at it. Restricting hover to pages that are neither current nor selected
+ * keeps each state's colour intact.
+ */
 .thumbnail:hover .thumbnail__frame {
-  outline-color: var(--border-strong);
   box-shadow: var(--shadow);
+}
+
+.thumbnail:not(.thumbnail--current):not(.thumbnail--selected):hover .thumbnail__frame {
+  outline: 2px solid var(--border-strong);
 }
 
 .thumbnail--current .thumbnail__frame {
   outline: 2px solid var(--accent);
 }
 
-.thumbnail--selected .thumbnail__frame {
+.thumbnail--current:hover .thumbnail__frame {
+  outline: 2px solid var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.thumbnail--selected .thumbnail__frame,
+.thumbnail--selected:hover .thumbnail__frame {
   outline: 2px solid var(--accent);
   box-shadow: 0 0 0 4px var(--accent-soft);
 }
@@ -628,10 +646,37 @@ textarea:disabled {
 .viewer__scroll {
   flex: 1;
   overflow: auto;
+  /* Pages stack and scroll continuously, so this is a column, not a centring
+     box for one page. */
+  display: block;
+  padding: 24px 0 32px;
+  /* Ctrl+scroll zooms; without this Windows precision touchpads still pan. */
+  overscroll-behavior: contain;
+}
+
+.viewer__pages {
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 28px;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  /* A page wider than the viewport must still be reachable by scrolling
+     rather than being clipped by the centring. */
+  min-width: min-content;
+  padding: 0 24px;
+}
+
+.page-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.page-slot__number {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  user-select: none;
 }
 
 .viewer--empty {

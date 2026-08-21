@@ -1,0 +1,55 @@
+{
+  "name": "nxtpdf",
+  "version": "0.1.0",
+  "description": "A simple, fast PDF editor with real print control.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build",
+    "setup:pdfium": "node scripts/fetch-pdfium.mjs",
+    "postinstall": "node scripts/fetch-pdfium.mjs",
+    "typecheck": "tsc -b",
+    "lint": "eslint . --ext ts,tsx --max-warnings 0",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"*.{json,md}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "rs:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml",
+    "rs:lint": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "rs:test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "check": "pnpm typecheck && pnpm format:check && pnpm rs:lint && pnpm rs:test"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "react": "^19",
+    "react-dom": "^19",
+    "zustand": "^5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^5",
+    "eslint": "^9",
+    "eslint-plugin-react-hooks": "^5",
+    "prettier": "^3",
+    "typescript": "^5.7",
+    "typescript-eslint": "^8",
+    "vite": "^7"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

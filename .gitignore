@@ -1,0 +1,44 @@
+# ---- Node / frontend ----
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+.eslintcache
+
+# ---- Rust / Tauri ----
+src-tauri/target/
+**/*.rs.bk
+
+# PDFium native libraries are downloaded by `pnpm setup:pdfium`, never committed.
+src-tauri/lib/*
+!src-tauri/lib/.gitkeep
+
+# Tauri generated
+src-tauri/gen/
+
+# ---- Editors / OS ----
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Secrets / signing ----
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.snk
+signing/
+
+# ---- Logs & scratch ----
+*.log
+npm-debug.log*
+pnpm-debug.log*
+scratch/
+tmp/

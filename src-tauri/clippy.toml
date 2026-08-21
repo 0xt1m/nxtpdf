@@ -1,0 +1,2 @@
+# The Win32 layer legitimately deals in large enums and long argument lists.
+too-many-arguments-threshold = 10

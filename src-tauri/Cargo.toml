@@ -1,0 +1,70 @@
+[package]
+name = "nxtpdf"
+version = "0.1.0"
+description = "A simple, fast PDF editor with real print control."
+authors = ["NXTPDF contributors"]
+edition = "2021"
+rust-version = "1.77"
+license = "MIT"
+repository = ""
+default-run = "nxtpdf"
+
+[lib]
+# Tauri v2 keeps app logic in a lib so mobile targets and tests can share it.
+name = "nxtpdf_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+log = "0.4"
+
+# PDF object model: page tree surgery, AcroForm read/write, saving.
+lopdf = "0.36"
+
+# PDFium bindings: rasterization for the viewer and the print pipeline.
+# "sync" implies "thread_safe" and additionally marks Pdfium as Send + Sync,
+# which is what lets us hold it in a process-wide OnceLock.
+pdfium-render = { version = "0.8", features = ["sync", "image"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+parking_lot = "0.12"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Printing",
+    "Win32_Storage_Xps",
+    "Win32_System_LibraryLoader",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
+
+[profile.dev]
+# Dependencies are optimized even in dev builds: PDF rasterization is far too
+# slow in a debug build to be usable, but our own crate stays fast to compile.
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

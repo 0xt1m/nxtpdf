@@ -1,0 +1,233 @@
+# Architecture
+
+Why NXTPDF is put together the way it is. Read this before making a structural
+change; most of the decisions here exist because the obvious alternative fails
+in a specific way.
+
+## The shape of it
+
+```
+ React (webview)                    Rust (native)
+┌──────────────────────┐          ┌────────────────────────────────┐
+│ components/          │          │ commands.rs   ← IPC contract   │
+│ state/store.ts       │  invoke  │                                │
+│   DocumentInfo       │ ───────► │ state.rs      ← the open doc   │
+│   snapshot           │ ◄─────── │   lopdf::Document (truth)      │
+│                      │          │                                │
+│ <img src=nxtpdf://…> │  images  │ pdf/document.rs  page tree     │
+│                      │ ◄─────── │ pdf/forms.rs     AcroForm      │
+└──────────────────────┘          │ pdf/render.rs    PDFium        │
+                                  │ printing/windows.rs  GDI       │
+                                  └────────────────────────────────┘
+```
+
+## Decision: lopdf is the truth, PDFium is only a renderer
+
+Two libraries touch PDFs here, with a hard boundary between them.
+
+- **lopdf** owns the document. Every edit — page moves, rotation, form values,
+  new fields — mutates a `lopdf::Document`. It is what gets saved.
+- **PDFium** never owns anything. To draw the current state, the lopdf model is
+  serialized to bytes and those bytes are handed to PDFium.
+
+This costs a serialization pass per render, mitigated by caching the bytes
+against a `revision` counter that only changes on edit.
+
+It buys three things:
+
+1. **No ownership fight.** `pdfium-render`'s types borrow from the `Pdfium`
+   instance. Storing a `PdfDocument` alongside its `Pdfium` in application state
+   is self-referential and genuinely painful in Rust.
+2. **A PDFium upgrade can never corrupt a saved file,** because PDFium is not
+   in the write path at all.
+3. **Editing works without PDFium.** If the library fails to load, the app
+   still opens, reorganizes, and saves; only rendering and printing are lost.
+   The backend emits `pdfium-unavailable` and the UI degrades rather than dying.
+
+PDFium is held in a `OnceLock` for a `'static` lifetime, which is why the
+`sync` feature is enabled — it is what marks `Pdfium` as `Send + Sync`.
+
+## Decision: page images bypass IPC
+
+Rendered pages travel over a custom URI scheme (`nxtpdf://localhost/page/{index}/{dpi}/{revision}`)
+rather than through `invoke`.
+
+Tauri's IPC is JSON. A page raster is hundreds of kilobytes of binary, so
+sending it through IPC means base64 — a 33% size penalty on top of a
+text-protocol round trip, for every page, every render. The URI scheme lets the
+webview fetch pages as ordinary images: binary, streamed, and cached by the
+webview itself.
+
+The `revision` segment is never read by the handler. It exists purely so that
+editing the document produces a different URL — otherwise the webview's cache
+would serve the pre-edit image indefinitely. The response is marked `immutable`
+precisely because the URL changes whenever the content does.
+
+Platform note: Windows and Android webviews will not accept a registered custom
+scheme, so Tauri routes them through `http://nxtpdf.localhost`. `src/lib/pageImage.ts`
+handles both spellings and the CSP in `tauri.conf.json` permits both.
+
+## Decision: every mutation returns a full snapshot
+
+Commands that change the document return a fresh `DocumentInfo` rather than an
+acknowledgement. The store replaces its snapshot wholesale; it never patches.
+
+Patching would mean the frontend duplicating backend logic — "after deleting
+page 3, page 4 becomes page 3" — and the two would eventually disagree. A full
+snapshot is a few hundred bytes and makes divergence structurally impossible.
+
+## Page tree flattening
+
+Reordering pages rewrites the `/Kids` array of the root `Pages` node, which
+flattens any nested page tree into a single level.
+
+The subtlety: `/Resources`, `/MediaBox`, `/CropBox`, and `/Rotate` are
+**inheritable**. A page can rely on a value held by an ancestor node. Flatten
+naively and those pages lose their size or their fonts.
+
+So `push_down_inherited` runs first, copying each inherited attribute onto the
+page dictionaries that were relying on it. Only then is the tree rebuilt.
+`prune_objects` then drops the now-unreachable intermediate nodes.
+
+## Form filling and `/NeedAppearances`
+
+Setting a field value writes `/V` and sets the form's `/NeedAppearances` to
+true, asking the viewer to regenerate the field's visual appearance from its
+value. Any stale `/AP` stream on the field is removed so it cannot mask the new
+value.
+
+This is correct per the spec and honored by every mainstream viewer. The
+tradeoff is real and worth knowing: **the appearance is not baked into the
+file.** A renderer that ignores `/NeedAppearances` shows the old visuals, and
+flattening a form to static content is not possible without generating real
+`/AP` content streams — which means font metrics, text layout, and clipping.
+That is the work required to lift this from "fills forms" to "flattens forms".
+
+Checkboxes are subtler than they look: the "on" state is not `/On`. It is
+whatever key appears in the widget's `/AP` `/N` dictionary that is not `/Off` —
+often `/Yes`, sometimes `/1`. The code reads the actual state name from the
+widget rather than assuming.
+
+## Printing
+
+The whole reason this app exists rather than being a web page.
+
+### Why not `window.print()`
+
+The webview's print path opens the browser's dialog. There is no API surface
+for tray, duplex, or color. It is a dead end for the requirement.
+
+### The GDI pipeline
+
+1. `EnumPrintersW` → the device list.
+2. `DeviceCapabilitiesW` → what this driver supports. `DC_BINS` gives tray ids
+   and `DC_BINNAMES` their display names; `DC_DUPLEX` and `DC_COLORDEVICE`
+   report two-sided and color support; `DC_PAPERS`/`DC_PAPERNAMES`/`DC_PAPERSIZE`
+   the media list.
+3. `DocumentPropertiesW` → the driver's default `DEVMODEW`, allocated at
+   `dmSize + dmDriverExtra` bytes so driver-private settings travel with it.
+4. Write our settings into that `DEVMODEW`, then `DocumentPropertiesW` again
+   with `DM_IN_BUFFER | DM_OUT_BUFFER` so the driver can validate and normalize
+   impossible combinations.
+5. `CreateDCW` with the resulting `DEVMODEW`, then
+   `StartDoc` / `StartPage` / `StretchDIBits` / `EndPage` / `EndDoc`.
+
+### The two traps
+
+**`dmFields` is not optional.** It is a bitmask declaring which `DEVMODEW`
+members are meaningful. A driver ignores any member whose bit is absent. Setting
+`dmDuplex` without setting `DM_DUPLEX` in `dmFields` silently prints
+single-sided — this is the single most common cause of "duplex doesn't work".
+
+**Bitmap orientation.** PDFium produces top-down rasters; a Windows DIB is
+bottom-up by default. The `BITMAPINFOHEADER.biHeight` is therefore **negative**,
+which declares top-down. Omit the minus sign and every page prints upside down.
+
+Channel order also differs: PDFium gives RGBA, a 32bpp `BI_RGB` DIB wants BGRA,
+hence `rgba_to_bgra`.
+
+### Rasterize, don't replay
+
+Each page is rendered to a bitmap and blitted onto the printer DC. Replaying
+PDF vectors as GDI calls would be sharper at high DPI but would have to
+reimplement the PDF imaging model against a much weaker one, with per-driver
+quirks. Rasterizing behaves identically everywhere.
+
+The cost is memory: a Letter page at 600 DPI is 5100×6600×4 bytes ≈ 135 MB.
+`effective_dpi` therefore defaults to the device DPI capped at 300 (≈35 MB) and
+hard-caps at 600, and pages are rendered one at a time.
+
+### Copies are the driver's job
+
+`dmCopies` is set rather than looping the render. One rasterization, N sheets —
+much faster, and it enables the printer's own hardware collation.
+
+### Drivers lie
+
+Drivers routinely accept a `DEVMODEW` and then quietly change it. After the
+merge step, `diff_warnings` compares what we asked for against what survived and
+reports the differences to the UI as warnings. Better to tell the user the tray
+was overridden than to let them wonder why the job came out of the wrong one.
+
+## Coordinate systems
+
+Three of them, and mixing them up is the classic source of "the field is in the
+wrong place" bugs.
+
+| Space | Origin | Y axis | Unit |
+|---|---|---|---|
+| PDF user space | bottom-left | up | points (1/72 in) |
+| Screen | top-left | down | CSS pixels |
+| Device (printer) | top-left of *printable area* | down | device pixels |
+
+`src/lib/geometry.ts` converts between the first two, including page rotation.
+The wrinkle: a widget's `/Rect` is always stored in **unrotated** user space,
+while `PageInfo` reports post-rotation dimensions. `unrotatedSize` undoes that
+swap before the transform is applied.
+
+For the printer, note that GDI's coordinate origin is the printable area, not
+the sheet. Aligning to the physical page — which "Actual size" does, so the
+margins match what a ruler measures — means subtracting `PHYSICALOFFSETX/Y`.
+
+## Why text editing is not here
+
+The most-requested missing feature, and the one that would dominate the
+schedule.
+
+PDF has no notion of paragraphs, words, or even lines. Text is a sequence of
+positioned glyph-drawing operators in a compressed content stream, drawn with a
+**subsetted** embedded font — the font program inside the file often contains
+only the glyphs already used.
+
+So changing "Smith" to "Schmidt" means:
+
+- locating the operators that drew it, across arbitrary positioning operators;
+- discovering there is no `c` or `d` glyph in the subset, and no width metrics
+  for them;
+- embedding a replacement font or extending the subset;
+- re-shaping the run and recomputing advance widths;
+- reflowing the rest of the line, and possibly the paragraph and page.
+
+A narrow version — edit a single run in place, fall back to embedding a full
+font when glyphs are missing — is perhaps three weeks and would cover most
+real-world "fix a typo, change a date" cases. Full Acrobat-style reflow requires
+a document reconstruction engine and is a multi-month project on its own.
+
+It was scoped out deliberately, not overlooked.
+
+## Known limitations
+
+- **Printing is Windows-only.** `printing/unsupported.rs` documents the CUPS
+  mapping for whoever implements it. CUPS should take the PDF directly rather
+  than a raster, which is both simpler and better quality than the GDI path.
+- **No undo.** The command stack that would provide it does not exist yet, and
+  retrofitting one into a document editor is unpleasant. Worth doing early.
+- **`Orientation::Auto` follows the first page.** A single `DEVMODEW` governs
+  the whole job, so a document mixing portrait and landscape cannot switch
+  sheets mid-job. Doing it properly means splitting into several spool jobs.
+- **`extract_pages` round-trips through bytes** to get an independent object
+  graph. Deep-copying an arbitrary subgraph with shared resources by hand is
+  where correctness bugs live; the round trip is slower and obviously right.
+- **Form field creation covers text, checkbox, and dropdown.** Radio groups
+  need a shared parent field with per-widget export values, which the current
+  merged field/widget model does not express.

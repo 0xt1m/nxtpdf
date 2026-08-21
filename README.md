@@ -6,21 +6,41 @@ Tauri 2 + React 19 + TypeScript on the front, Rust on the back.
 
 ## What it does today
 
-- **View and navigate** — page rendering via PDFium, thumbnails, zoom.
-- **Reorganize** — rotate, delete, drag-to-reorder, append another PDF, extract pages to a new file.
-- **Fill forms** — read and write existing AcroForm fields: text, checkboxes, radios, dropdowns.
-- **Build forms** — drag a rectangle on the page to place a text field, checkbox, or dropdown.
+- **Open several files at once** — tabs, each remembering its page and zoom.
+  Opening a file that is already open focuses its tab rather than making a
+  second copy.
+- **View and navigate** — page rendering via PDFium, thumbnails, zoom
+  (Ctrl+scroll), keyboard shortcuts throughout.
+- **Reorganize** — rotate, delete, drag-to-reorder, append another PDF, extract
+  pages to a new file.
+- **Fill forms** — read and write existing AcroForm fields: text, checkboxes,
+  radios, dropdowns. Edit in place on the page, or in the side panel.
+- **Build forms** — arm a tool from the Add strip, then drag on the page to
+  size the field. Move and resize with the mouse or the arrow keys, rename,
+  copy and paste, and set text size including auto-fit.
+- **Print properly** — choose the **tray**, one- or two-sided (long or short
+  edge), **color or black and white**, paper size, orientation, copies,
+  collation, page range, and scaling. Every option is read from the driver, so
+  you only see what your printer can actually do, and virtual devices
+  (Print to PDF, XPS, Fax) are hidden by default.
 - **Update itself** — checks on launch, downloads in the background, and
   installs silently when you close the app. A banner offers **Update now** if
   you would rather not wait. See [docs/releasing.md](docs/releasing.md).
-- **Print properly** — choose the **tray**, one- or two-sided (long or short edge), **color or black and white**, paper size, orientation, copies, collation, page range, and scaling. Every option is read from the driver, so you only see what your printer can actually do.
+- **Open PDFs from Explorer** — registers as a `.pdf` handler; double-clicking
+  a file loads it into the running window as a new tab.
 
 ## What it does not do
 
-- **Editing existing page text.** Deliberately out of scope for this draft — see [docs/architecture.md](docs/architecture.md) for why it is the expensive part.
-- **Flattening forms.** Field values are written with `/NeedAppearances`, so viewers regenerate the visuals. A renderer that ignores that flag shows stale appearances.
+- **Editing existing page text.** Deliberately out of scope — see
+  [docs/architecture.md](docs/architecture.md) for why it is the expensive part.
+- **Flattening forms.** Field values are written with `/NeedAppearances`, so
+  viewers regenerate the visuals. A renderer that ignores that flag shows stale
+  appearances.
+- **Undo.** There is no command stack yet; Save early.
 - **Radio group creation, digital signatures, redaction.**
-- **Printing on macOS or Linux.** The print backend is Windows-only; everything else is cross-platform. See `src-tauri/src/printing/unsupported.rs` for what a CUPS implementation needs.
+- **Printing on macOS or Linux.** The print backend is Windows-only; everything
+  else is cross-platform. See `src-tauri/src/printing/unsupported.rs` for what a
+  CUPS implementation needs.
 
 ## Requirements
 

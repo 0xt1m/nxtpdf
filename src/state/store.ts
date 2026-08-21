@@ -166,8 +166,6 @@ interface AppState {
   extractSelection: (path: string) => Promise<void>;
 
   setFieldValue: (name: string, value: string) => Promise<void>;
-  /** Adds a field to the current page at a free default position. */
-  addField: (kind: AddableKind) => Promise<void>;
   setFieldFontSize: (name: string, size: number) => Promise<void>;
   copySelectedFields: () => void;
   pasteFields: () => Promise<void>;
@@ -390,7 +388,8 @@ export const useStore = create<AppState>((set, get) => {
         if (doc) {
           await adopt(doc);
         } else {
-          set({ doc: null, fields: [] });
+          // Nothing open: the tab strip has to empty with it.
+          set({ doc: null, docs: [], fields: [], selectedPages: [], selectedFields: [] });
         }
       });
     },
@@ -610,62 +609,6 @@ export const useStore = create<AppState>((set, get) => {
           // One draw places one field, so the tool puts itself away.
           pendingField: null,
         });
-      });
-    },
-
-    addField: async (kind) => {
-      const { doc, currentPage, fields } = get();
-      const page = doc?.pages[currentPage];
-      if (!page) return;
-
-      // Field rectangles live in unrotated page space, so undo the swap that
-      // PageInfo applies for display.
-      const quarterTurned = page.rotation === 90 || page.rotation === 270;
-      const pageWidth = quarterTurned ? page.heightPt : page.widthPt;
-      const pageHeight = quarterTurned ? page.widthPt : page.heightPt;
-
-      const { width, height } = DEFAULT_SIZE[kind];
-
-      // Cascade down the page so repeated clicks do not stack fields exactly
-      // on top of each other, wrapping before running off the bottom.
-      const onThisPage = fields.filter((field) => field.pageIndex === currentPage).length;
-      const step = 30;
-      const margin = 54;
-      const usable = Math.max(1, Math.floor((pageHeight - margin * 2) / step));
-      const slot = onThisPage % usable;
-
-      const left = margin;
-      const top = pageHeight - margin - slot * step;
-
-      const rect: [number, number, number, number] = [
-        left,
-        Math.max(0, top - height),
-        Math.min(pageWidth - margin, left + width),
-        top,
-      ];
-
-      const name = nextFieldName(
-        kind,
-        fields.map((field) => field.name)
-      );
-
-      await run(async () => {
-        const updated = await ipc.createFormField({
-          pageIndex: currentPage,
-          name,
-          kind,
-          rect,
-          fontSize: kind === 'text' ? 10 : null,
-          multiline: false,
-          required: false,
-          maxLength: null,
-          options: kind === 'choice' ? ['Option 1', 'Option 2'] : [],
-        });
-        await adopt(updated);
-
-        // Select it and show the panel so it can be renamed straight away.
-        fieldAnchor = name;
-        set({ selectedFields: [name], focus: 'fields', panel: 'fields' });
       });
     },
 

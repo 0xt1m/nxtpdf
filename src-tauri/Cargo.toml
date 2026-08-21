@@ -1,12 +1,12 @@
 [package]
 name = "nxtpdf"
-version = "0.1.0"
+version = "1.0.0"
 description = "A simple, fast PDF editor with real print control."
 authors = ["NXTPDF contributors"]
 edition = "2021"
 rust-version = "1.77"
 license = "MIT"
-repository = ""
+repository = "https://github.com/0xt1m/nxtpdf"
 default-run = "nxtpdf"
 
 [lib]

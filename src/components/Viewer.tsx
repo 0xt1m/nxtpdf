@@ -88,10 +88,12 @@ export function Viewer() {
     return () => node.removeEventListener('wheel', onWheel);
   }, [nudgeZoom]);
 
-  // Changing page should not strand an open editor.
+  // Changing page — or tab — should not strand an open editor. Switching tabs
+  // can leave `currentPage` unchanged, so the document id has to be watched
+  // too, or an editor could reopen on a same-named field in the new document.
   useEffect(() => {
     setEditing(null);
-  }, [currentPage]);
+  }, [currentPage, doc?.id]);
 
   // Arming a tool cancels any in-progress edit; they are different modes.
   useEffect(() => {

@@ -39,39 +39,62 @@ existing installs will stop accepting updates.
 
 ### 2. The update endpoint
 
-`src-tauri/tauri.conf.json` currently points at a placeholder:
+Set to this repository:
 
 ```json
-"endpoints": ["https://github.com/OWNER/REPO/releases/latest/download/latest.json"]
+"endpoints": ["https://github.com/0xt1m/nxtpdf/releases/latest/download/latest.json"]
 ```
 
-Replace `OWNER/REPO` with the real repository. Any host that serves two static
-files over HTTPS works — GitHub Releases just happens to be free and needs no
-infrastructure. For a private repo or your own web host, point the URL there
-instead; the format is identical.
+The URL is baked into the binary at build time, so **changing it requires a
+rebuild** — editing the config alone does nothing to installers already made.
 
-Tauri expands `{{target}}`, `{{arch}}`, and `{{current_version}}` inside the URL
-if you want per-platform manifests. A Windows-only build does not need them.
+Any host serving two static files over HTTPS would work; GitHub Releases is
+free and needs no infrastructure. Tauri expands `{{target}}`, `{{arch}}` and
+`{{current_version}}` inside the URL if you ever want per-platform manifests. A
+Windows-only build does not need them.
+
+### 3. Repository secrets
+
+The release workflow signs on the runner, so add these under
+**Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | The entire contents of `%USERPROFILE%\.tauri\nxtpdf-updater.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Empty — the key has no password |
 
 ## Cutting a release
 
-### 1. Bump the version in two places
+### The short version
 
-They must match, or the updater will offer an update that installs the same
-version and loops.
+```bash
+# 1. Bump the version in package.json, src-tauri/Cargo.toml and tauri.conf.json
+# 2. Commit it
+git tag v1.1.0
+git push origin v1.1.0
+```
 
-- `package.json` → `version`
-- `src-tauri/Cargo.toml` → `version`
+The workflow in `.github/workflows/release.yml` builds, signs, generates
+`latest.json`, and opens a **draft** release. Review the assets, then publish
+it — the updater only sees releases marked latest.
 
-`src-tauri/tauri.conf.json` also has a `version` field; keep it in step.
+### Building locally instead
 
-### 2. Build the signed installer
+Only needed to test an installer before tagging.
 
 ```powershell
-$env:TAURI_SIGNING_PRIVATE_KEY_PATH = "$env:USERPROFILE\.tauri\nxtpdf-updater.key"
+# tauri build reads the key itself, not a path to it. Setting
+# TAURI_SIGNING_PRIVATE_KEY_PATH instead looks like it works - the installers
+# still build - but the .sig files are silently missing and the release is
+# useless to the updater.
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content "$env:USERPROFILE\.tauri\nxtpdf-updater.key" -Raw
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
 pnpm app:build
 ```
+
+A password-less key **still prompts** for a password, so a shell with no stdin
+hangs at "Decrypting updater signing key". Run it from a normal terminal, or
+pipe a newline in.
 
 Output lands in `src-tauri/target/release/bundle/`:
 
@@ -81,8 +104,13 @@ Output lands in `src-tauri/target/release/bundle/`:
 | `nsis/NXTPDF_<version>_x64-setup.exe.sig` | Signature the updater verifies |
 | `msi/NXTPDF_<version>_x64_en-US.msi` | Alternative installer for first-time installs |
 
-`createUpdaterArtifacts: true` in `tauri.conf.json` is what produces the `.sig`.
-If it is missing, the signing environment variables were not set.
+Check the signatures exist before publishing anything by hand:
+
+```powershell
+Get-ChildItem src-tauri	arget
+eleaseundle
+sis\*.sig
+```
 
 **Use the NSIS build as the update payload, not the MSI.** MSI updates need
 elevation, which cannot be granted silently while the app is closing.
@@ -125,6 +153,7 @@ You do not need to publish anything to test the mechanism:
 
 ```bash
 # 1. Sign any file as if it were the installer
+# The signer CLI accepts a path too; `tauri build` only accepts the key itself.
 export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/nxtpdf-updater.key)"
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 npx tauri signer sign path/to/payload.exe

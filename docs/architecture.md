@@ -83,10 +83,20 @@ text-protocol round trip, for every page, every render. The URI scheme lets the
 webview fetch pages as ordinary images: binary, streamed, and cached by the
 webview itself.
 
-The `revision` segment is never read by the handler. It exists purely so that
-editing the document produces a different URL — otherwise the webview's cache
-would serve the pre-edit image indefinitely. The response is marked `immutable`
-precisely because the URL changes whenever the content does.
+Neither the `documentId` nor the `revision` segment is read as data. Both exist
+to keep the webview's cache honest: the response is marked `immutable`, so any
+two requests sharing a URL share an image.
+
+`revision` covers edits — without it the pre-edit image would be served
+indefinitely. `documentId` covers *opening a different file*, and was added
+after a real bug: a freshly opened document starts at revision 1, so its page 1
+had the same URL as the previous document's page 1, and the old page was served
+from cache until an edit happened to bump the counter. Form fields travel over
+IPC and updated correctly, which made it look like a rendering problem rather
+than a caching one.
+
+The lesson generalizes: a cache key must name *everything* the response depends
+on, and "which document" was invisible in the original key.
 
 Platform note: Windows and Android webviews will not accept a registered custom
 scheme, so Tauri routes them through `http://nxtpdf.localhost`. `src/lib/pageImage.ts`
@@ -100,6 +110,21 @@ acknowledgement. The store replaces its snapshot wholesale; it never patches.
 Patching would mean the frontend duplicating backend logic — "after deleting
 page 3, page 4 becomes page 3" — and the two would eventually disagree. A full
 snapshot is a few hundred bytes and makes divergence structurally impossible.
+
+## Tabs
+
+`Workspace` owns a `Vec<DocumentSession>` and an active id. Tabs are addressed
+by **id, not index**: ids are monotonic and never reused, so closing a tab
+cannot silently re-point a request that is already in flight — a page image
+issued for tab 3 must not come back holding whatever moved into slot 3.
+
+The page-image handler resolves against `with_document_id` rather than "the
+active document" for the same reason: switching tabs while a render is pending
+must not swap the answer.
+
+Opening a path that is already open focuses that tab instead of loading it
+twice. Two independent models of one file would let their saves overwrite each
+other with no warning.
 
 ## Page tree flattening
 

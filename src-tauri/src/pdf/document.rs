@@ -78,6 +78,24 @@ pub fn open(path: &Path) -> AppResult<Document> {
     if doc.version.is_empty() {
         doc.version = "1.7".to_string();
     }
+
+    // Forms filled by writing `/V` and setting `/NeedAppearances` carry no
+    // drawable appearance. PDFium — which renders both our pages and our
+    // printed output — ignores that flag, so such a document would open
+    // looking entirely empty. Paint the missing appearances up front.
+    let repaired = crate::pdf::forms::regenerate_missing_appearances(&mut doc);
+    if repaired > 0 {
+        log::info!("generated appearances for {repaired} filled field(s)");
+    }
+
+    // A widget is only drawn if its page lists it in /Annots. Some generators
+    // write the field tree and leave that list empty, which makes the form
+    // invisible everywhere except Acrobat, which quietly rebuilds it.
+    let reattached = crate::pdf::forms::reattach_orphaned_widgets(&mut doc);
+    if reattached > 0 {
+        log::info!("re-attached {reattached} orphaned form widget(s) to their pages");
+    }
+
     Ok(doc)
 }
 

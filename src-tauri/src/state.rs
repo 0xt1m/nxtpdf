@@ -62,14 +62,24 @@ impl DocumentSession {
         self.serialized = None;
     }
 
-    /// Returns the document serialized to PDF bytes, reusing the cache when the
-    /// document has not changed since the last call.
+    /// Returns the document serialized to PDF bytes **for rendering and
+    /// printing**, reusing the cache when nothing has changed since the last
+    /// call.
+    ///
+    /// Field appearances are flattened into the page content first. PDFium
+    /// leaves widget annotations to its form-fill module and draws nothing for
+    /// them here, so without this a filled form renders and prints blank. The
+    /// flattening happens on a copy — [`Self::doc`], and therefore every saved
+    /// file, keeps its live editable fields.
     pub fn bytes(&mut self) -> AppResult<&[u8]> {
         let needs_refresh = !matches!(&self.serialized, Some((rev, _)) if *rev == self.revision);
 
         if needs_refresh {
+            let mut flattened = self.doc.clone();
+            crate::pdf::forms::flatten_appearances(&mut flattened);
+
             let mut buffer = Vec::new();
-            self.doc.save_to(&mut buffer)?;
+            flattened.save_to(&mut buffer)?;
             self.serialized = Some((self.revision, buffer));
         }
 

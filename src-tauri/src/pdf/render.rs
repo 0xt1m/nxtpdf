@@ -26,7 +26,17 @@
 //! [`with_pdfium`] or it will reintroduce the crash.
 
 use parking_lot::Mutex;
-use pdfium_render::prelude::{PdfDocument, PdfRenderConfig};
+use std::os::raw::c_void;
+
+use pdfium_render::prelude::PdfDocument;
+
+// PDFium constants, declared here rather than imported: their path inside the
+// crate's generated bindings moves between PDFium versions, and the values are
+// fixed by PDFium's public API.
+/// Include annotations — which is what paints form field appearances.
+const FPDF_ANNOT: i32 = 1;
+/// 32-bit bitmap, byte order blue, green, red, alpha.
+const FPDFBITMAP_BGRA: i32 = 4;
 
 use crate::error::{AppError, AppResult};
 use crate::pdf::POINTS_PER_INCH;
@@ -72,8 +82,24 @@ fn scale_for(dpi: f32) -> AppResult<f32> {
 
 /// Rasterizes one page at the given DPI.
 ///
-/// `include_form_fields` draws interactive widget appearances on top of the
-/// page content — wanted for both the on-screen viewer and printing.
+/// # Why this uses the raw bindings
+///
+/// `pdfium-render`'s document type initializes PDFium's *form-fill
+/// environment* as soon as a document is loaded. Once that exists, PDFium
+/// stops painting widget annotations during ordinary page rendering — it
+/// assumes the host application will paint them itself by calling
+/// `FPDF_FFLDraw`, which in turn only works after a per-page
+/// `FORM_OnAfterLoadPage` handshake that the crate never performs and does not
+/// expose the handles to perform.
+///
+/// The result was a filled form rendering completely blank: every field's
+/// value present in the file, with correct appearance streams, and none of it
+/// drawn — on screen or on paper.
+///
+/// Loading through the bindings directly means no form-fill environment is
+/// ever created, so `FPDF_ANNOT` paints widget appearances the ordinary way.
+/// That is also why filled values must have real `/AP` streams; see
+/// `pdf::forms`.
 pub fn render_page(
     bytes: &[u8],
     page_index: usize,
@@ -81,37 +107,78 @@ pub fn render_page(
     include_form_fields: bool,
 ) -> AppResult<PageRaster> {
     let scale = scale_for(dpi)?;
-    let index = u16::try_from(page_index).map_err(|_| AppError::PageOutOfRange(page_index))?;
+    let index = i32::try_from(page_index).map_err(|_| AppError::PageOutOfRange(page_index))?;
 
-    with_pdfium(bytes, |document| {
-        let page = document
-            .pages()
-            .get(index)
-            .map_err(|_| AppError::PageOutOfRange(page_index))?;
+    let _guard = RENDER_LOCK.lock();
+    let bindings = pdfium()?.bindings();
 
-        let projected = (page.width().value * scale).ceil() as u64
-            * (page.height().value * scale).ceil() as u64;
+    let document = bindings.FPDF_LoadMemDocument64(bytes, None);
+    if document.is_null() {
+        return Err(AppError::Render(
+            "PDFium could not parse the document".into(),
+        ));
+    }
+    // Every early return from here on must still close the document.
+    let result = (|| {
+        let page = bindings.FPDF_LoadPage(document, index);
+        if page.is_null() {
+            return Err(AppError::PageOutOfRange(page_index));
+        }
+
+        let width_pt = bindings.FPDF_GetPageWidthF(page);
+        let height_pt = bindings.FPDF_GetPageHeightF(page);
+
+        let width = ((width_pt * scale).ceil() as i32).max(1);
+        let height = ((height_pt * scale).ceil() as i32).max(1);
+
+        let projected = width as u64 * height as u64;
         if projected > MAX_PIXELS {
+            bindings.FPDF_ClosePage(page);
             return Err(AppError::InvalidInput(format!(
                 "Rendering page {} at {dpi} DPI would need {projected} pixels, above the {MAX_PIXELS} limit. Lower the DPI.",
                 page_index + 1
             )));
         }
 
-        let config = PdfRenderConfig::new()
-            .scale_page_by_factor(scale)
-            .render_form_data(include_form_fields)
-            .render_annotations(true);
+        // BGRA, 4 bytes per pixel — PDFium's own layout, converted below.
+        let stride = width * 4;
+        let mut buffer = vec![0u8; (stride * height) as usize];
 
-        let bitmap = page.render_with_config(&config).map_err(AppError::from)?;
-        let image = bitmap.as_image().into_rgba8();
+        let bitmap = bindings.FPDFBitmap_CreateEx(
+            width,
+            height,
+            FPDFBITMAP_BGRA,
+            buffer.as_mut_ptr() as *mut c_void,
+            stride,
+        );
+        if bitmap.is_null() {
+            bindings.FPDF_ClosePage(page);
+            return Err(AppError::Render("could not allocate a bitmap".into()));
+        }
+
+        // Paper is white; without this the page renders onto transparency.
+        bindings.FPDFBitmap_FillRect(bitmap, 0, 0, width, height, 0xFFFF_FFFF);
+
+        let flags = if include_form_fields { FPDF_ANNOT } else { 0 };
+        bindings.FPDF_RenderPageBitmap(bitmap, page, 0, 0, width, height, 0, flags);
+
+        bindings.FPDFBitmap_Destroy(bitmap);
+        bindings.FPDF_ClosePage(page);
+
+        // PDFium hands back BGRA; the rest of the app works in RGBA.
+        for pixel in buffer.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
 
         Ok(PageRaster {
-            width: image.width(),
-            height: image.height(),
-            rgba: image.into_raw(),
+            width: width as u32,
+            height: height as u32,
+            rgba: buffer,
         })
-    })
+    })();
+
+    bindings.FPDF_CloseDocument(document);
+    result
 }
 
 /// Rasterizes a page and encodes it as PNG, for display in the webview.

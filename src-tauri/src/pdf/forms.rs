@@ -730,6 +730,460 @@ fn text_appearance_stream(
     ))))
 }
 
+/// Writes the `/AP` `/N` appearance for every widget of a text or choice
+/// field, leaving `/V` alone.
+fn paint_text_value(
+    doc: &mut Document,
+    field_id: ObjectId,
+    value: &str,
+    size: f32,
+    multiline: bool,
+) -> AppResult<()> {
+    // Read every rectangle first: building the streams borrows the document
+    // mutably, which cannot overlap the reads.
+    let targets: Vec<(ObjectId, [f32; 4])> = field_widgets(doc, field_id)
+        .into_iter()
+        .filter_map(|widget| widget_rect(doc, widget).map(|rect| (widget, rect)))
+        .collect();
+
+    let mut appearances = Vec::with_capacity(targets.len());
+    for (widget, rect) in targets {
+        let stream = text_appearance_stream(doc, rect, value, size, multiline)?;
+        appearances.push((widget, stream));
+    }
+
+    for (widget, stream) in appearances {
+        if let Ok(widget) = doc.get_object_mut(widget).and_then(Object::as_dict_mut) {
+            widget.set(
+                "AP",
+                Object::Dictionary(dictionary_from([("N", Object::Reference(stream))])),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Whether a widget already carries an appearance that paints something.
+///
+/// An `/AP` entry is not enough on its own: plenty of files carry a `/N`
+/// stream of zero length, having filled `/V` and left the drawing to the
+/// viewer via `/NeedAppearances`.
+fn widget_draws_something(doc: &Document, widget_id: ObjectId) -> bool {
+    let Ok(dict) = doc.get_dictionary(widget_id) else {
+        return false;
+    };
+    let Ok(appearance) = dict.get(b"AP") else {
+        return false;
+    };
+    let Ok(appearance) = resolve(doc, appearance).as_dict() else {
+        return false;
+    };
+    let Ok(normal) = appearance.get(b"N") else {
+        return false;
+    };
+
+    match resolve(doc, normal) {
+        Object::Stream(stream) => !stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone())
+            .is_empty(),
+        // A dictionary of states (checkboxes) counts as drawable.
+        Object::Dictionary(states) => !states.is_empty(),
+        _ => false,
+    }
+}
+
+/// Paints any filled field that would otherwise render blank.
+///
+/// Many forms are filled by writing `/V` and setting `/NeedAppearances`,
+/// leaving the appearance for the viewer to generate. Acrobat obliges; PDFium
+/// does not, and PDFium draws both our pages and our printed output. Without
+/// this pass such a document opens looking completely empty.
+///
+/// Returns how many fields were repaired.
+pub fn regenerate_missing_appearances(doc: &mut Document) -> usize {
+    let candidates: Vec<String> = list_fields(doc)
+        .into_iter()
+        .filter(|field| matches!(field.kind, FieldKind::Text | FieldKind::Choice))
+        .filter(|field| {
+            field
+                .value
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+        })
+        .map(|field| field.name)
+        .collect();
+
+    let mut repaired = 0;
+
+    for name in candidates {
+        let Some(field_id) = find_field(doc, &name) else {
+            continue;
+        };
+
+        let widgets = field_widgets(doc, field_id);
+        if widgets.is_empty() || widgets.iter().all(|&w| widget_draws_something(doc, w)) {
+            continue;
+        }
+
+        let Some(value) = field_attr(doc, field_id, b"V")
+            .as_ref()
+            .and_then(|object| value_to_string(doc, object))
+        else {
+            continue;
+        };
+
+        let size = appearance_string(doc, field_id)
+            .as_deref()
+            .and_then(font_size_from_appearance)
+            .unwrap_or(0.0);
+        let multiline = field_flags(doc, field_id) & FLAG_MULTILINE != 0;
+
+        if paint_text_value(doc, field_id, &value, size, multiline).is_ok() {
+            repaired += 1;
+        }
+    }
+
+    repaired
+}
+
+/// Re-attaches form widgets that no page lists in its `/Annots` array.
+///
+/// # Why this exists
+///
+/// A widget is drawn because it appears in a page's `/Annots`. The AcroForm
+/// `/Fields` array only says the field *exists*. Several generators — including
+/// whatever produced the forms this app was built for — write the field tree but
+/// leave `/Annots` empty. Acrobat papers over it by rebuilding the list from the
+/// widgets' `/P` back-pointers; PDFium does not, and renders a filled form
+/// completely blank.
+///
+/// So we do the rebuild ourselves, on open. Each widget names its page in `/P`;
+/// when it does not, a single-page document leaves only one possibility.
+/// Widgets we cannot place are left alone rather than guessed at.
+///
+/// Returns how many widgets were re-attached.
+pub fn reattach_orphaned_widgets(doc: &mut Document) -> usize {
+    let pages = page_index_map(doc);
+    let page_list = page_ids(doc);
+
+    // Everything each page already lists, so a well-formed file is untouched.
+    let mut listed: HashMap<ObjectId, Vec<ObjectId>> = HashMap::new();
+    for &page_id in &page_list {
+        let existing = doc
+            .get_dictionary(page_id)
+            .ok()
+            .and_then(|page| page.get(b"Annots").ok())
+            .map(|annots| resolve(doc, annots).clone())
+            .and_then(|annots| annots.as_array().ok().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|entry| entry.as_reference().ok())
+            .collect();
+        listed.insert(page_id, existing);
+    }
+
+    let mut missing: HashMap<ObjectId, Vec<ObjectId>> = HashMap::new();
+
+    for widget_id in all_widgets(doc) {
+        let target = match widget_page(doc, widget_id, &pages) {
+            Some(index) => page_list.get(index).copied(),
+            // No /P and no page lists it. One page means no ambiguity.
+            None if page_list.len() == 1 => page_list.first().copied(),
+            None => None,
+        };
+
+        let Some(page_id) = target else { continue };
+
+        let already = listed
+            .get(&page_id)
+            .is_some_and(|annots| annots.contains(&widget_id));
+        let queued = missing
+            .get(&page_id)
+            .is_some_and(|annots| annots.contains(&widget_id));
+
+        if !already && !queued {
+            missing.entry(page_id).or_default().push(widget_id);
+        }
+    }
+
+    let mut reattached = 0;
+
+    for &page_id in &page_list {
+        let Some(widgets) = missing.get(&page_id) else {
+            continue;
+        };
+
+        let mut annots: Vec<Object> = listed
+            .get(&page_id)
+            .map(|ids| ids.iter().map(|&id| Object::Reference(id)).collect())
+            .unwrap_or_default();
+        annots.extend(widgets.iter().map(|&id| Object::Reference(id)));
+        reattached += widgets.len();
+
+        // /Annots may live in its own object; write through to wherever it is.
+        let indirect = doc
+            .get_dictionary(page_id)
+            .ok()
+            .and_then(|page| page.get(b"Annots").ok())
+            .and_then(|annots| annots.as_reference().ok());
+
+        match indirect {
+            Some(array_id) => {
+                if let Ok(object) = doc.get_object_mut(array_id) {
+                    *object = Object::Array(annots);
+                }
+            }
+            None => {
+                if let Ok(page) = doc.get_object_mut(page_id).and_then(Object::as_dict_mut) {
+                    page.set("Annots", Object::Array(annots));
+                }
+            }
+        }
+    }
+
+    reattached
+}
+
+/// Every widget annotation reachable from the AcroForm field tree.
+fn all_widgets(doc: &Document) -> Vec<ObjectId> {
+    fn walk(doc: &Document, field_id: ObjectId, depth: usize, out: &mut Vec<ObjectId>) {
+        if depth > MAX_FIELD_DEPTH {
+            return;
+        }
+
+        let children = child_fields(doc, field_id);
+        if children.is_empty() {
+            out.extend(field_widgets(doc, field_id));
+            return;
+        }
+
+        for child in children {
+            walk(doc, child, depth + 1, out);
+        }
+    }
+
+    let roots: Vec<ObjectId> = acro_form_dict(doc)
+        .and_then(|form| form.get(b"Fields").ok())
+        .map(|fields| resolve(doc, fields).clone())
+        .and_then(|fields| fields.as_array().ok().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| entry.as_reference().ok())
+        .collect();
+
+    let mut out = Vec::new();
+    for root in roots {
+        walk(doc, root, 0, &mut out);
+    }
+    out
+}
+
+/// Draws every widget's appearance directly into its page's content stream.
+///
+/// # Why this exists
+///
+/// PDFium does not paint widget annotations during page rendering, with or
+/// without `FPDF_ANNOT`. Its form-fill module owns them, and that module only
+/// draws after a per-page handshake the Rust bindings neither perform nor
+/// expose the handles to perform. The visible symptom is a filled form that
+/// renders — and prints — completely blank.
+///
+/// Copying each appearance into the page content sidesteps the question
+/// entirely: it becomes ordinary page graphics that every renderer draws.
+///
+/// This is destructive, so it runs on a **throwaway copy** made for rendering
+/// and printing. The document that gets saved keeps its live, editable fields.
+///
+/// Returns how many widgets were drawn.
+pub fn flatten_appearances(doc: &mut Document) -> usize {
+    let mut drawn = 0;
+
+    for page_id in page_ids(doc) {
+        // Gather first: adding objects below borrows the document mutably.
+        let widgets = page_widget_appearances(doc, page_id);
+        if widgets.is_empty() {
+            continue;
+        }
+
+        let mut operations = String::new();
+        let mut resources = Vec::new();
+
+        for (index, (stream_id, rect, bbox)) in widgets.iter().enumerate() {
+            // A name that cannot collide with anything already in /Resources.
+            let name = format!("NxAp{index}");
+
+            let bbox_width = (bbox[2] - bbox[0]).abs().max(f32::EPSILON);
+            let bbox_height = (bbox[3] - bbox[1]).abs().max(f32::EPSILON);
+            let scale_x = (rect[2] - rect[0]).abs() / bbox_width;
+            let scale_y = (rect[3] - rect[1]).abs() / bbox_height;
+
+            // Map the form's bounding box onto the widget rectangle, exactly
+            // as a viewer would when compositing the annotation.
+            operations.push_str(&format!(
+                "q {scale_x:.5} 0 0 {scale_y:.5} {:.3} {:.3} cm /{name} Do Q
+",
+                rect[0] - bbox[0] * scale_x,
+                rect[1] - bbox[1] * scale_y,
+            ));
+
+            resources.push((name, *stream_id));
+            drawn += 1;
+        }
+
+        let content_id = doc.add_object(Object::Stream(lopdf::Stream::new(
+            Dictionary::new(),
+            operations.into_bytes(),
+        )));
+
+        attach_xobjects(doc, page_id, &resources);
+        append_content(doc, page_id, content_id);
+    }
+
+    drawn
+}
+
+/// The appearance stream, widget rectangle and form bounding box of every
+/// widget on a page that has something to draw.
+fn page_widget_appearances(
+    doc: &Document,
+    page_id: ObjectId,
+) -> Vec<(ObjectId, [f32; 4], [f32; 4])> {
+    let Ok(page) = doc.get_dictionary(page_id) else {
+        return Vec::new();
+    };
+    let Ok(annots) = page.get(b"Annots") else {
+        return Vec::new();
+    };
+    let Ok(annots) = resolve(doc, annots).as_array().cloned() else {
+        return Vec::new();
+    };
+
+    let mut found = Vec::new();
+
+    for entry in annots {
+        let Ok(widget_id) = entry.as_reference() else {
+            continue;
+        };
+        let Ok(widget) = doc.get_dictionary(widget_id) else {
+            continue;
+        };
+
+        // Hidden and no-view annotations are not painted by anyone.
+        let flags = widget.get(b"F").and_then(Object::as_i64).unwrap_or(0);
+        if flags & 0x2 != 0 || flags & 0x20 != 0 {
+            continue;
+        }
+
+        let Some(rect) = widget_rect(doc, widget_id) else {
+            continue;
+        };
+
+        let Some(stream_id) = normal_appearance(doc, widget) else {
+            continue;
+        };
+        let Some(bbox) = stream_bbox(doc, stream_id) else {
+            continue;
+        };
+
+        found.push((stream_id, rect, bbox));
+    }
+
+    found
+}
+
+/// The `/AP` `/N` stream to draw, following `/AS` when the entry is a set of
+/// states rather than a single stream.
+fn normal_appearance(doc: &Document, widget: &Dictionary) -> Option<ObjectId> {
+    let appearance = resolve(doc, widget.get(b"AP").ok()?)
+        .as_dict()
+        .ok()?
+        .clone();
+    let normal = appearance.get(b"N").ok()?.clone();
+
+    match resolve(doc, &normal) {
+        Object::Stream(_) => normal.as_reference().ok(),
+        Object::Dictionary(states) => {
+            // Checkboxes and radios: /AS names which state is showing.
+            let selected = widget.get(b"AS").and_then(Object::as_name).ok()?;
+            states.get(selected).ok()?.as_reference().ok()
+        }
+        _ => None,
+    }
+}
+
+fn stream_bbox(doc: &Document, stream_id: ObjectId) -> Option<[f32; 4]> {
+    let stream = doc.get_object(stream_id).ok()?.as_stream().ok()?;
+    let array = resolve(doc, stream.dict.get(b"BBox").ok()?)
+        .as_array()
+        .ok()?
+        .clone();
+    if array.len() != 4 {
+        return None;
+    }
+
+    let mut out = [0.0f32; 4];
+    for (slot, value) in out.iter_mut().zip(array.iter()) {
+        *slot = resolve(doc, value).as_float().ok()?;
+    }
+    Some(out)
+}
+
+/// Registers appearance streams under `/Resources` `/XObject` on a page.
+fn attach_xobjects(doc: &mut Document, page_id: ObjectId, entries: &[(String, ObjectId)]) {
+    // Resources may be inherited or held by reference; resolve to an id we can
+    // edit, or create a fresh dictionary on the page itself.
+    let existing = doc
+        .get_dictionary(page_id)
+        .ok()
+        .and_then(|page| page.get(b"Resources").ok().cloned());
+
+    let mut resources = match existing {
+        Some(Object::Dictionary(dict)) => dict,
+        Some(Object::Reference(id)) => doc
+            .get_dictionary(id)
+            .cloned()
+            .unwrap_or_else(|_| Dictionary::new()),
+        _ => Dictionary::new(),
+    };
+
+    let mut xobjects = resources
+        .get(b"XObject")
+        .map(|value| resolve(doc, value).clone())
+        .and_then(|value| value.as_dict().cloned())
+        .unwrap_or_default();
+
+    for (name, stream_id) in entries {
+        xobjects.set(name.as_bytes().to_vec(), Object::Reference(*stream_id));
+    }
+
+    resources.set("XObject", Object::Dictionary(xobjects));
+
+    if let Ok(page) = doc.get_object_mut(page_id).and_then(Object::as_dict_mut) {
+        page.set("Resources", Object::Dictionary(resources));
+    }
+}
+
+/// Appends a content stream after whatever the page already draws.
+fn append_content(doc: &mut Document, page_id: ObjectId, content_id: ObjectId) {
+    let existing = doc
+        .get_dictionary(page_id)
+        .ok()
+        .and_then(|page| page.get(b"Contents").ok().cloned());
+
+    let mut contents = match existing {
+        Some(Object::Array(items)) => items,
+        Some(other) => vec![other],
+        None => Vec::new(),
+    };
+    contents.push(Object::Reference(content_id));
+
+    if let Ok(page) = doc.get_object_mut(page_id).and_then(Object::as_dict_mut) {
+        page.set("Contents", Object::Array(contents));
+    }
+}
+
 /// Sets a field's value. `value` is interpreted per field kind:
 ///
 /// * text / choice — used verbatim
@@ -759,35 +1213,14 @@ pub fn set_field_value(doc: &mut Document, name: &str, value: &str) -> AppResult
                 .unwrap_or(0.0);
             let multiline = field_flags(doc, field_id) & FLAG_MULTILINE != 0;
 
-            // Paint the value ourselves rather than trusting the viewer to.
-            // Every widget gets its own stream, since each has its own size.
-            // Read every rectangle first: building the streams borrows the
-            // document mutably, which cannot overlap the reads.
-            let targets: Vec<(ObjectId, [f32; 4])> = field_widgets(doc, field_id)
-                .into_iter()
-                .filter_map(|widget| widget_rect(doc, widget).map(|rect| (widget, rect)))
-                .collect();
-
-            let mut appearances = Vec::with_capacity(targets.len());
-            for (widget, rect) in targets {
-                let stream = text_appearance_stream(doc, rect, value, size, multiline)?;
-                appearances.push((widget, stream));
-            }
-
             let dict = doc
                 .get_object_mut(field_id)
                 .and_then(Object::as_dict_mut)
                 .map_err(AppError::Pdf)?;
             dict.set("V", Object::String(encoded, StringFormat::Literal));
 
-            for (widget, stream) in appearances {
-                if let Ok(widget) = doc.get_object_mut(widget).and_then(Object::as_dict_mut) {
-                    widget.set(
-                        "AP",
-                        Object::Dictionary(dictionary_from([("N", Object::Reference(stream))])),
-                    );
-                }
-            }
+            // Paint it ourselves rather than trusting the viewer to.
+            paint_text_value(doc, field_id, value, size, multiline)?;
         }
 
         FieldKind::Checkbox | FieldKind::Radio => {
@@ -1355,6 +1788,80 @@ mod tests {
         }
     }
 
+    /// Strips every page's `/Annots`, reproducing the malformed shape that
+    /// several real generators emit: a full field tree that no page lists.
+    fn orphan_the_widgets(doc: &mut Document) {
+        for page_id in page_ids(doc) {
+            if let Ok(page) = doc.get_object_mut(page_id).and_then(Object::as_dict_mut) {
+                page.set("Annots", Object::Array(Vec::new()));
+            }
+        }
+    }
+
+    #[test]
+    fn orphaned_widgets_are_reattached_to_their_page() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("buyer")).unwrap();
+        create_field(&mut doc, &text_field("seller")).unwrap();
+        orphan_the_widgets(&mut doc);
+
+        assert_eq!(reattach_orphaned_widgets(&mut doc), 2);
+
+        let page = doc.get_dictionary(page_ids(&doc)[0]).unwrap();
+        let annots = resolve(&doc, page.get(b"Annots").unwrap())
+            .as_array()
+            .unwrap()
+            .len();
+        assert_eq!(annots, 2);
+    }
+
+    #[test]
+    fn a_well_formed_document_is_left_alone() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("buyer")).unwrap();
+
+        // create_field already lists the widget, so there is nothing to repair
+        // and a second pass must not duplicate it.
+        assert_eq!(reattach_orphaned_widgets(&mut doc), 0);
+        assert_eq!(reattach_orphaned_widgets(&mut doc), 0);
+    }
+
+    #[test]
+    fn flattening_draws_each_filled_widget() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("buyer")).unwrap();
+        set_field_value(&mut doc, "buyer", "Tracie").unwrap();
+
+        assert_eq!(flatten_appearances(&mut doc), 1);
+
+        // The appearance is now reachable as ordinary page graphics.
+        let page = doc.get_dictionary(page_ids(&doc)[0]).unwrap().clone();
+        let resources = resolve(&doc, page.get(b"Resources").unwrap())
+            .as_dict()
+            .unwrap()
+            .clone();
+        let xobjects = resolve(&doc, resources.get(b"XObject").unwrap())
+            .as_dict()
+            .unwrap()
+            .clone();
+        assert!(xobjects.has(b"NxAp0"));
+    }
+
+    #[test]
+    fn flattening_reaches_widgets_the_page_had_orphaned() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("buyer")).unwrap();
+        set_field_value(&mut doc, "buyer", "Tracie").unwrap();
+        orphan_the_widgets(&mut doc);
+
+        // Nothing to draw until the widget belongs to a page again - which is
+        // exactly why the two repairs have to run together.
+        assert_eq!(flatten_appearances(&mut doc.clone()), 0);
+
+        reattach_orphaned_widgets(&mut doc);
+        assert_eq!(flatten_appearances(&mut doc), 1);
+    }
+
     #[test]
     fn blank_document_has_no_form() {
         let doc = blank().unwrap();
@@ -1631,6 +2138,49 @@ mod tests {
                 .into_owned();
         assert!(content.contains("(Second) Tj"));
         assert!(!content.contains("(First) Tj"));
+    }
+
+    /// Regression: a filled field must still draw after a save/reload cycle.
+    ///
+    /// A file was found on disk whose widgets all carried `/AP` `/N` streams of
+    /// zero length — values present, nothing painted. If serializing drops
+    /// stream contents, every save silently destroys the appearances and the
+    /// document renders blank from then on.
+    #[test]
+    fn appearances_survive_a_save_and_reload() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("survivor")).unwrap();
+        set_field_value(&mut doc, "survivor", "Persist me").unwrap();
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialize");
+        let reloaded = Document::load_mem(&bytes).expect("reload");
+
+        let field_id = find_field(&reloaded, "survivor").expect("field survived");
+        let widget = field_widgets(&reloaded, field_id)[0];
+
+        let normal = reloaded
+            .get_dictionary(widget)
+            .unwrap()
+            .get(b"AP")
+            .map(|ap| resolve(&reloaded, ap).clone())
+            .expect("AP survived")
+            .as_dict()
+            .unwrap()
+            .get(b"N")
+            .and_then(Object::as_reference)
+            .expect("N survived");
+
+        let stream = reloaded.get_object(normal).unwrap().as_stream().unwrap();
+        let content = stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone());
+
+        assert!(!content.is_empty(), "appearance stream came back empty");
+        assert!(
+            String::from_utf8_lossy(&content).contains("(Persist me) Tj"),
+            "appearance no longer draws the value"
+        );
     }
 
     #[test]

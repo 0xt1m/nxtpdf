@@ -47,6 +47,31 @@ It buys three things:
 PDFium is held in a `OnceLock` for a `'static` lifetime, which is why the
 `sync` feature is enabled — it is what marks `Pdfium` as `Send + Sync`.
 
+### PDFium is single-threaded, and the type system will not tell you
+
+`pdfium-render`'s `sync` feature adds `unsafe impl Send + Sync for Pdfium`. That
+is an *assertion* to the compiler, not an implementation: the underlying library
+keeps process-global state and does no locking of its own. Nothing in the type
+system stops you calling it from several threads, and doing so does not produce
+an error — it corrupts PDFium's internals and takes the process down with
+`STATUS_ACCESS_VIOLATION` (0xc0000005).
+
+This is easy to hit by accident. The page-image handler spawns a thread per
+request, and opening an 8-page document fires nine requests at once (one per
+thumbnail plus the viewer). That crashed the app on open.
+
+Every entry point in `pdf/render.rs` therefore goes through `with_pdfium`, which
+holds a process-wide `RENDER_LOCK` across the whole load-and-render sequence —
+not just the load, because the `PdfDocument` and everything borrowed from it
+touch the same global state. `concurrent_renders_do_not_crash` in that module is
+the regression test; it fails by aborting the test binary if the lock is
+removed.
+
+Consequence: renders serialize. That is why thumbnails render at 32 DPI and page
+images are cached hard by URL — the cheapest render is the one that never
+happens. Lifting this properly means a dedicated render thread with a work
+queue, so requests can be coalesced and stale ones dropped.
+
 ## Decision: page images bypass IPC
 
 Rendered pages travel over a custom URI scheme (`nxtpdf://localhost/page/{index}/{dpi}/{revision}`)
@@ -222,6 +247,9 @@ It was scoped out deliberately, not overlooked.
   than a raster, which is both simpler and better quality than the GDI path.
 - **No undo.** The command stack that would provide it does not exist yet, and
   retrofitting one into a document editor is unpleasant. Worth doing early.
+- **Renders are serialized** behind `RENDER_LOCK`, so a page-heavy document
+  fills its thumbnails one at a time. Correct, but a render thread with a work
+  queue would let stale requests be dropped instead of queued.
 - **`Orientation::Auto` follows the first page.** A single `DEVMODEW` governs
   the whole job, so a document mixing portrait and landscape cannot switch
   sheets mid-job. Doing it properly means splitting into several spool jobs.

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { RotateCcw, RotateCw, Trash2 } from 'lucide-react';
 import { useStore, type SelectionModifiers } from '@/state/store';
 import { pageImageUrl, THUMBNAIL_DPI } from '@/lib/pageImage';
@@ -140,6 +140,8 @@ function Thumbnail({
   onDrop,
   onDragEnd,
 }: ThumbnailProps) {
+  const itemRef = useRef<HTMLLIElement>(null);
+
   const classes = [
     'thumbnail',
     isCurrent && 'thumbnail--current',
@@ -152,8 +154,18 @@ function Thumbnail({
   // Preserve aspect ratio so the box does not jump when the image loads.
   const aspectRatio = page.widthPt > 0 ? page.widthPt / page.heightPt : 0.77;
 
+  // Scrolling the document moves the highlight down the sidebar, which is
+  // pointless if the highlighted thumbnail has scrolled out of the strip.
+  // `nearest` keeps it still while the page is already visible.
+  useEffect(() => {
+    if (isCurrent) {
+      itemRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [isCurrent]);
+
   return (
     <li
+      ref={itemRef}
       className={classes}
       draggable={!busy}
       onDragStart={onDragStart}

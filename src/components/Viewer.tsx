@@ -150,34 +150,84 @@ export function Viewer() {
     scrollNode.scrollTop = anchor.contentY * ratio - anchor.viewportY;
   }, [zoom, scrollNode]);
 
-  // Whichever page covers most of the viewport is the current one. That drives
-  // the pager, the Add strip's target, and the thumbnail highlight.
+  // Track the page being read, straight from geometry.
+  //
+  // IntersectionObserver is the wrong tool here, for three reasons:
+  //   * its callback receives only the pages whose intersection *changed*, so
+  //     "the most visible one" would be picked from a partial set;
+  //   * `intersectionRatio` is relative to each element's own size, so a short
+  //     page fully on screen scores 1.0 while a tall page filling the viewport
+  //     scores 0.3 — the small one wins;
+  //   * it fires only when a threshold is crossed, so the highlight freezes
+  //     between them.
+  //
+  // Measuring against an anchor line has none of those problems and is a
+  // handful of rectangle reads per frame.
+  const pageCount = doc?.pageCount ?? 0;
+  const documentId = doc?.id ?? null;
+
   useEffect(() => {
-    if (!scrollNode || !doc) return;
+    const node = scrollNode;
+    if (!node || pageCount === 0) return;
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-        if (!visible) return;
+    let frame = 0;
 
-        const index = Number((visible.target as HTMLElement).dataset.page);
-        if (Number.isNaN(index)) return;
+    const update = () => {
+      frame = 0;
 
-        // Ignore readings while a programmatic scroll is still travelling,
-        // or the intermediate pages would steal the selection.
-        if (scrollingTo.current !== null && scrollingTo.current !== index) return;
+      const view = node.getBoundingClientRect();
+      // A third down the viewport, not the top edge: that is where the page
+      // you are actually reading sits once you have scrolled into a document.
+      const anchor = view.top + view.height * 0.33;
+
+      let best: number | null = null;
+      let bestDistance = Number.POSITIVE_INFINITY;
+
+      for (const [index, element] of pageNodes.current) {
+        const box = element.getBoundingClientRect();
+
+        // Distance from the anchor line to this page, zero while it spans it.
+        const distance =
+          box.top > anchor
+            ? box.top - anchor
+            : box.bottom < anchor
+              ? anchor - box.bottom
+              : 0;
+
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = index;
+        }
+      }
+
+      if (best === null) return;
+
+      // While a programmatic scroll is travelling, the pages it flies past
+      // must not steal the highlight.
+      if (scrollingTo.current !== null) {
+        if (scrollingTo.current !== best) return;
         scrollingTo.current = null;
+      }
 
-        setCurrentPage(index);
-      },
-      { root: scrollNode, threshold: [0.1, 0.5, 0.9] }
-    );
+      setCurrentPage(best);
+    };
 
-    for (const node of pageNodes.current.values()) observer.observe(node);
-    return () => observer.disconnect();
-  }, [scrollNode, doc, setCurrentPage]);
+    // Coalesce to one measurement per frame; scroll fires far more often.
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+
+    node.addEventListener('scroll', onScroll, { passive: true });
+    update();
+
+    return () => {
+      node.removeEventListener('scroll', onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+    // Keyed on page count and identity rather than the whole snapshot: `doc`
+    // is replaced on every edit, which would tear this down and rebuild it
+    // constantly. Zoom is included because it changes every page's height.
+  }, [scrollNode, pageCount, documentId, zoom, setCurrentPage]);
 
   /** Brings a page into view; used by the pager and the thumbnail list. */
   const scrollToPage = useCallback((index: number) => {

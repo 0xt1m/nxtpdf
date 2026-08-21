@@ -598,8 +598,21 @@ textarea:disabled {
 }
 
 .thumbnail__number {
+  padding: 0 5px;
+  border-radius: 999px;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+}
+
+/*
+ * Current and selected mean different things — where you are, versus what
+ * Delete acts on — but both drew the same accent ring, which made them
+ * impossible to tell apart. The page number carries the "you are here" mark
+ * so the ring can be left to mean selection.
+ */
+.thumbnail--current .thumbnail__number {
+  color: var(--accent-text);
+  background: var(--accent);
 }
 
 .badge {

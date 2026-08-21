@@ -30,6 +30,20 @@ const PAGE_SCHEME: &str = "nxtpdf";
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Without a logger installed, every `log::` call in this crate is
+        // silently discarded — including the ones that report why PDFium or a
+        // page render failed. Install it first so startup errors are visible.
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Stdout,
+                ))
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Webview,
+                ))
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
@@ -75,6 +89,47 @@ pub fn run() {
                 let _ = app.emit("pdfium-unavailable", message);
             }
 
+            // Debug builds can auto-open a document, which makes the render
+            // path reproducible without driving the UI by hand:
+            //   NXTPDF_DEV_OPEN="C:\path\to\file.pdf" pnpm app:dev
+            #[cfg(debug_assertions)]
+            if let Ok(path) = std::env::var("NXTPDF_DEV_OPEN") {
+                match pdf::document::open(std::path::Path::new(&path)) {
+                    Ok(document) => {
+                        let state = app.state::<AppState>();
+                        *state.session.lock() =
+                            Some(state::DocumentSession::new(document, Some(path.into())));
+                        log::info!("NXTPDF_DEV_OPEN: opened document");
+                    }
+                    Err(error) => log::error!("NXTPDF_DEV_OPEN failed: {error}"),
+                }
+            }
+
+            // Semicolon-separated paths appended to the auto-opened document,
+            // so the append path is reproducible without driving the UI.
+            #[cfg(debug_assertions)]
+            if let Ok(list) = std::env::var("NXTPDF_DEV_APPEND") {
+                let state = app.state::<AppState>();
+                for path in list.split(';').filter(|p| !p.is_empty()) {
+                    let mut guard = state.session.lock();
+                    let Some(session) = guard.as_mut() else { continue };
+
+                    match pdf::document::open(std::path::Path::new(path))
+                        .and_then(|extra| pdf::document::append_document(&mut session.doc, extra))
+                    {
+                        Ok(()) => {
+                            session.touch();
+                            log::info!(
+                                "NXTPDF_DEV_APPEND: {path} -> {} pages, revision {}",
+                                pdf::document::page_count(&session.doc),
+                                session.revision
+                            );
+                        }
+                        Err(error) => log::error!("NXTPDF_DEV_APPEND {path}: {error}"),
+                    }
+                }
+            }
+
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -104,7 +159,10 @@ fn error_response(status: StatusCode, message: &str) -> Response<Vec<u8>> {
 
 /// Renders the requested page to a PNG.
 fn serve_page(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
+    log::info!("page request: {}", request.uri());
+
     let Some((index, dpi)) = parse_page_request(request.uri().path()) else {
+        log::error!("unparseable page URL: {}", request.uri());
         return error_response(
             StatusCode::BAD_REQUEST,
             "Expected a URL of the form page/{index}/{dpi}/{revision}",
@@ -123,21 +181,30 @@ fn serve_page(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Ve
     let bytes = match rendered {
         Ok(bytes) => bytes,
         Err(error) => {
+            log::error!("page {index}: no document to render ({error})");
             return error_response(StatusCode::NOT_FOUND, &error.to_string());
         }
     };
 
     match pdf::render::render_page_png(&bytes, index, dpi, true) {
-        Ok(png) => Response::builder()
+        Ok(png) => {
+            log::info!("page {index} rendered at {dpi} dpi: {} bytes", png.len());
+            Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", "image/png")
             // Every edit changes the URL, so a rendered page is immutable.
             .header("Cache-Control", "public, max-age=31536000, immutable")
             .header("Access-Control-Allow-Origin", "*")
-            .body(png)
-            .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "encode failed")),
+                .body(png)
+                .unwrap_or_else(|_| {
+                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "encode failed")
+                })
+        }
 
-        Err(error) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+        Err(error) => {
+            log::error!("page {index}: render failed: {error}");
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
+        }
     }
 }
 

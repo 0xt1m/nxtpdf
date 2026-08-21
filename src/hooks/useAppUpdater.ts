@@ -157,7 +157,15 @@ export function useAppUpdater(): AppUpdater {
   }, [beginDownload]);
 
   // --- Install on close ---
+  //
+  // Registered only once an update is actually downloaded. Tauri's
+  // `onCloseRequested` suppresses the native close whenever a listener exists
+  // and makes the JS responsible for calling `destroy()` — so a listener that
+  // is always present routes every ordinary window close through this code,
+  // and anything that goes wrong in it leaves a window that will not shut.
   useEffect(() => {
+    if (state.stage !== 'ready') return;
+
     const appWindow = getCurrentWindow();
 
     const registration = appWindow.onCloseRequested(async (event) => {
@@ -183,7 +191,7 @@ export function useAppUpdater(): AppUpdater {
     return () => {
       void registration.then((unlisten) => unlisten());
     };
-  }, []);
+  }, [state.stage]);
 
   const updateNow = useCallback(async () => {
     const update = updateRef.current;

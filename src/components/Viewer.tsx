@@ -84,6 +84,12 @@ export function Viewer() {
   /** Set while we scroll programmatically, so it is not read back as intent. */
   const scrollingTo = useRef<number | null>(null);
 
+  /** True while space is held: the pointer pans instead of selecting. */
+  const [panReady, setPanReady] = useState(false);
+  const panning = useRef<{ x: number; y: number; left: number; top: number } | null>(
+    null
+  );
+
   /**
    * Where the cursor was when a zoom started, so that point can be put back
    * under the cursor once the new scale has been laid out.
@@ -252,6 +258,47 @@ export function Viewer() {
     }
   }, [currentPage, scrollNode, scrollToPage]);
 
+  // Hold space to pan, the way every canvas app does it.
+  //
+  // The keydown must preventDefault or the browser's own space-scrolls-down
+  // behaviour fires as well. Typing is excluded, or space would stop being a
+  // space in every input on the page.
+  useEffect(() => {
+    function isTyping(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      if (target.isContentEditable) return true;
+      const tag = target.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.code !== 'Space' || event.repeat || isTyping(event.target)) return;
+      event.preventDefault();
+      setPanReady(true);
+    }
+
+    function onKeyUp(event: KeyboardEvent) {
+      if (event.code !== 'Space') return;
+      setPanReady(false);
+      panning.current = null;
+    }
+
+    // Losing focus mid-drag would otherwise leave the cursor stuck in pan mode.
+    function onBlur() {
+      setPanReady(false);
+      panning.current = null;
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, []);
+
   // Arming a tool cancels any in-progress edit; they are different modes.
   useEffect(() => {
     if (pendingField) setEditing(null);
@@ -281,7 +328,42 @@ export function Viewer() {
 
   return (
     <main className="viewer">
-      <div className="viewer__scroll" ref={setScrollNode}>
+      <div
+        className={`viewer__scroll${panReady ? ' viewer__scroll--pan' : ''}${
+          panning.current ? ' viewer__scroll--panning' : ''
+        }`}
+        ref={setScrollNode}
+        onPointerDown={(event) => {
+          if (!panReady || !scrollNode) return;
+          // Capture so the drag survives the pointer leaving the element, and
+          // stop it reaching the page beneath, which would start a selection.
+          event.preventDefault();
+          event.stopPropagation();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          panning.current = {
+            x: event.clientX,
+            y: event.clientY,
+            left: scrollNode.scrollLeft,
+            top: scrollNode.scrollTop,
+          };
+        }}
+        onPointerMove={(event) => {
+          const start = panning.current;
+          if (!start || !scrollNode) return;
+          // Drag the content with the cursor, so the scroll goes the other way.
+          scrollNode.scrollLeft = start.left - (event.clientX - start.x);
+          scrollNode.scrollTop = start.top - (event.clientY - start.y);
+        }}
+        onPointerUp={(event) => {
+          panning.current = null;
+          if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+        }}
+        onPointerCancel={() => {
+          panning.current = null;
+        }}
+      >
         <div className="viewer__pages">
           {doc.pages.map((page) => (
             <PageCanvas

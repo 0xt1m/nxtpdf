@@ -8,6 +8,8 @@ dist-ssr/
 
 # ---- Rust / Tauri ----
 src-tauri/target/
+# A stray top-level target/ if a --target-dir is ever given a root-relative path.
+/target/
 **/*.rs.bk
 
 # PDFium native libraries are downloaded by `pnpm setup:pdfium`, never committed.

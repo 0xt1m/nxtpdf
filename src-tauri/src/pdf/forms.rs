@@ -2,15 +2,20 @@
 //!
 //! # Appearance streams
 //!
-//! When a field value changes we set the value and flip the form's
-//! `/NeedAppearances` flag to true, which asks the viewer to regenerate the
-//! field's visual appearance from the value. This is correct per the spec and
-//! is what every mainstream viewer honors.
+//! Setting `/V` alone is not enough. The spec's `/NeedAppearances` flag asks
+//! the *viewer* to repaint a field from its value, and Acrobat obliges — but
+//! PDFium ignores it when rasterizing, and rasterizing is what both the
+//! on-screen viewer and the print pipeline do here. Relying on the flag meant
+//! a filled form looked empty on screen and came out blank on paper.
 //!
-//! The tradeoff: the appearance is *not* baked into the file, so a renderer
-//! that ignores `/NeedAppearances` shows the old visuals. Flattening a form to
-//! static content requires generating real `/AP` streams — tracked separately
-//! and deliberately out of scope for this draft.
+//! So text and choice values are painted into a real `/AP` `/N` form XObject
+//! (see `text_appearance_stream`). The flag is still set, so a viewer that
+//! honours it can produce something better than our approximation.
+//!
+//! What that approximation gives up: text is drawn with Helvetica in
+//! WinAnsiEncoding, so characters outside Latin-1 are painted as `?` — `/V`
+//! keeps the true value either way — and auto-sizing estimates glyph widths
+//! rather than reading the font's metrics.
 
 use std::collections::HashMap;
 
@@ -578,6 +583,153 @@ fn search_field(
     None
 }
 
+/// Escapes a string for a PDF literal, where `\`, `(` and `)` are special.
+fn escape_pdf_literal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str(r"\\"),
+            '(' => out.push_str(r"\("),
+            ')' => out.push_str(r"\)"),
+            // The appearance font is WinAnsi, so anything outside Latin-1
+            // cannot be drawn with it. `/V` still holds the true value; this
+            // only affects what is painted.
+            c if (c as u32) < 0x100 => out.push(c),
+            _ => out.push('?'),
+        }
+    }
+    out
+}
+
+/// Returns the Helvetica font object, reusing the form's own if it has one.
+fn ensure_helvetica(doc: &mut Document) -> AppResult<ObjectId> {
+    let existing = acro_form_dict(doc)
+        .and_then(|form| form.get(b"DR").ok())
+        .map(|dr| resolve(doc, dr).clone())
+        .and_then(|dr| dr.as_dict().ok().cloned())
+        .and_then(|dr| dr.get(b"Font").ok().cloned())
+        .map(|fonts| resolve(doc, &fonts).clone())
+        .and_then(|fonts| fonts.as_dict().ok().cloned())
+        .and_then(|fonts| fonts.get(b"Helv").ok().and_then(|f| f.as_reference().ok()));
+
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+
+    Ok(doc.add_object(Object::Dictionary(dictionary_from([
+        ("Type", Object::Name(b"Font".to_vec())),
+        ("Subtype", Object::Name(b"Type1".to_vec())),
+        ("BaseFont", Object::Name(b"Helvetica".to_vec())),
+        ("Encoding", Object::Name(b"WinAnsiEncoding".to_vec())),
+    ]))))
+}
+
+/// Helvetica's average advance width, as a fraction of the font size.
+///
+/// Real widths come from the font's metrics table, which is overkill for
+/// choosing an auto-size that fits; 0.5 em is close for mixed-case text and
+/// errs slightly wide, so the text lands inside the box rather than outside.
+const AVERAGE_GLYPH_WIDTH: f32 = 0.5;
+
+/// Chooses a text size that fits the box, for fields set to auto-size.
+fn auto_font_size(width: f32, height: f32, text: &str, multiline: bool) -> f32 {
+    // Leave room for the 1pt inset the appearance draws with.
+    let usable_width = (width - 4.0).max(1.0);
+    let usable_height = (height - 2.0).max(1.0);
+
+    if multiline {
+        return (usable_height * 0.28).clamp(4.0, 12.0);
+    }
+
+    let by_height = usable_height * 0.66;
+    let characters = text.chars().count().max(1) as f32;
+    let by_width = usable_width / (characters * AVERAGE_GLYPH_WIDTH);
+
+    by_height.min(by_width).clamp(4.0, 72.0)
+}
+
+/// Builds the `/AP` `/N` form XObject that paints a text field's value.
+///
+/// Without this the field renders blank. Setting `/V` and asking the viewer to
+/// rebuild the appearance via `/NeedAppearances` is correct per the spec, but
+/// PDFium ignores that flag when rasterizing — and rasterizing is exactly what
+/// both the on-screen viewer and the print pipeline do, so a filled form would
+/// look empty on screen *and* come out blank on paper.
+fn text_appearance_stream(
+    doc: &mut Document,
+    rect: [f32; 4],
+    value: &str,
+    requested_size: f32,
+    multiline: bool,
+) -> AppResult<ObjectId> {
+    let width = (rect[2] - rect[0]).abs();
+    let height = (rect[3] - rect[1]).abs();
+
+    let size = if requested_size > 0.0 {
+        requested_size
+    } else {
+        auto_font_size(width, height, value, multiline)
+    };
+
+    let mut content = String::new();
+    // /Tx BMC ... EMC marks this as a form field's appearance, and the clip
+    // keeps long values from spilling outside the widget.
+    content.push_str("/Tx BMC\nq\n");
+    content.push_str(&format!(
+        "1 1 {:.2} {:.2} re W n\n",
+        (width - 2.0).max(0.0),
+        (height - 2.0).max(0.0)
+    ));
+    content.push_str("BT\n");
+    content.push_str(&format!("/Helv {size:.2} Tf\n0 g\n"));
+
+    if multiline {
+        content.push_str(&format!("{:.2} TL\n", size * 1.2));
+        let top = height - 2.0 - size;
+        content.push_str(&format!("2 {top:.2} Td\n"));
+        for (index, line) in value.split('\n').enumerate() {
+            if index > 0 {
+                content.push_str("T*\n");
+            }
+            content.push_str(&format!("({}) Tj\n", escape_pdf_literal(line)));
+        }
+    } else {
+        // Vertically centred: half the leftover space, plus a nudge for the
+        // descender so the text sits on an optical centre line.
+        let baseline = ((height - size) / 2.0 + size * 0.22).max(1.0);
+        content.push_str(&format!("2 {baseline:.2} Td\n"));
+        content.push_str(&format!("({}) Tj\n", escape_pdf_literal(value)));
+    }
+
+    content.push_str("ET\nQ\nEMC\n");
+
+    let helvetica = ensure_helvetica(doc)?;
+    let mut fonts = Dictionary::new();
+    fonts.set("Helv", Object::Reference(helvetica));
+
+    let mut resources = Dictionary::new();
+    resources.set("Font", Object::Dictionary(fonts));
+
+    let mut stream_dict = Dictionary::new();
+    stream_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    stream_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+    stream_dict.set(
+        "BBox",
+        Object::Array(vec![
+            Object::Real(0.0),
+            Object::Real(0.0),
+            Object::Real(width),
+            Object::Real(height),
+        ]),
+    );
+    stream_dict.set("Resources", Object::Dictionary(resources));
+
+    Ok(doc.add_object(Object::Stream(lopdf::Stream::new(
+        stream_dict,
+        content.into_bytes(),
+    ))))
+}
+
 /// Sets a field's value. `value` is interpreted per field kind:
 ///
 /// * text / choice — used verbatim
@@ -601,13 +753,41 @@ pub fn set_field_value(doc: &mut Document, name: &str, value: &str) -> AppResult
     match kind {
         FieldKind::Text | FieldKind::Choice => {
             let encoded = encode_pdf_text(value);
+            let size = appearance_string(doc, field_id)
+                .as_deref()
+                .and_then(font_size_from_appearance)
+                .unwrap_or(0.0);
+            let multiline = field_flags(doc, field_id) & FLAG_MULTILINE != 0;
+
+            // Paint the value ourselves rather than trusting the viewer to.
+            // Every widget gets its own stream, since each has its own size.
+            // Read every rectangle first: building the streams borrows the
+            // document mutably, which cannot overlap the reads.
+            let targets: Vec<(ObjectId, [f32; 4])> = field_widgets(doc, field_id)
+                .into_iter()
+                .filter_map(|widget| widget_rect(doc, widget).map(|rect| (widget, rect)))
+                .collect();
+
+            let mut appearances = Vec::with_capacity(targets.len());
+            for (widget, rect) in targets {
+                let stream = text_appearance_stream(doc, rect, value, size, multiline)?;
+                appearances.push((widget, stream));
+            }
+
             let dict = doc
                 .get_object_mut(field_id)
                 .and_then(Object::as_dict_mut)
                 .map_err(AppError::Pdf)?;
             dict.set("V", Object::String(encoded, StringFormat::Literal));
-            // A stale appearance stream would otherwise mask the new value.
-            dict.remove(b"AP");
+
+            for (widget, stream) in appearances {
+                if let Ok(widget) = doc.get_object_mut(widget).and_then(Object::as_dict_mut) {
+                    widget.set(
+                        "AP",
+                        Object::Dictionary(dictionary_from([("N", Object::Reference(stream))])),
+                    );
+                }
+            }
         }
 
         FieldKind::Checkbox | FieldKind::Radio => {
@@ -1366,6 +1546,91 @@ mod tests {
         create_field(&mut doc, &text_field("sized")).unwrap();
         assert!(set_field_font_size(&mut doc, "sized", -1.0).is_err());
         assert!(set_field_font_size(&mut doc, "sized", 500.0).is_err());
+    }
+
+    #[test]
+    fn literal_escaping_covers_the_special_characters() {
+        // One literal backslash in, two out.
+        assert_eq!(escape_pdf_literal("a\\b"), "a\\\\b");
+        assert_eq!(escape_pdf_literal("(x)"), r"\(x\)");
+        assert_eq!(escape_pdf_literal("plain"), "plain");
+    }
+
+    #[test]
+    fn characters_outside_latin1_are_not_dropped_silently() {
+        // Helvetica/WinAnsi cannot draw these; a placeholder is better than
+        // emitting bytes the viewer will misread.
+        assert_eq!(escape_pdf_literal("日本"), "??");
+    }
+
+    #[test]
+    fn auto_size_shrinks_to_fit_a_long_value() {
+        let short = auto_font_size(200.0, 20.0, "AB", false);
+        let long = auto_font_size(200.0, 20.0, &"A".repeat(80), false);
+        assert!(long < short, "long text should use a smaller size");
+        assert!(long >= 4.0, "never below the legibility floor");
+    }
+
+    #[test]
+    fn auto_size_is_bounded_by_height() {
+        // A wide, short box is limited by its height, not its width.
+        let size = auto_font_size(400.0, 12.0, "x", false);
+        assert!(size <= 12.0 * 0.66 + 0.01);
+    }
+
+    #[test]
+    fn filling_a_field_paints_an_appearance() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("painted")).unwrap();
+        set_field_value(&mut doc, "painted", "Hello").unwrap();
+
+        let field_id = find_field(&doc, "painted").expect("field");
+        let widget = field_widgets(&doc, field_id)[0];
+        let dict = doc.get_dictionary(widget).unwrap();
+
+        let appearance = dict.get(b"AP").expect("AP written");
+        let normal = resolve(&doc, appearance)
+            .as_dict()
+            .unwrap()
+            .get(b"N")
+            .and_then(Object::as_reference)
+            .expect("N stream");
+
+        let stream = doc.get_object(normal).unwrap().as_stream().unwrap();
+        let content = String::from_utf8_lossy(&stream.content);
+        assert!(content.contains("(Hello) Tj"), "value not drawn: {content}");
+        assert!(
+            content.contains("/Tx BMC"),
+            "not marked as a field appearance"
+        );
+    }
+
+    #[test]
+    fn refilling_replaces_the_previous_appearance() {
+        let mut doc = blank().unwrap();
+        create_field(&mut doc, &text_field("painted")).unwrap();
+        set_field_value(&mut doc, "painted", "First").unwrap();
+        set_field_value(&mut doc, "painted", "Second").unwrap();
+
+        let field_id = find_field(&doc, "painted").expect("field");
+        let widget = field_widgets(&doc, field_id)[0];
+        let normal = doc
+            .get_dictionary(widget)
+            .unwrap()
+            .get(b"AP")
+            .map(|ap| resolve(&doc, ap).clone())
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"N")
+            .and_then(Object::as_reference)
+            .unwrap();
+
+        let content =
+            String::from_utf8_lossy(&doc.get_object(normal).unwrap().as_stream().unwrap().content)
+                .into_owned();
+        assert!(content.contains("(Second) Tj"));
+        assert!(!content.contains("(First) Tj"));
     }
 
     #[test]

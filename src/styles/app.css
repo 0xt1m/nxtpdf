@@ -455,6 +455,7 @@ textarea:disabled {
 /* ----------------------------------------------------------------- Sidebar */
 
 .sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: var(--sidebar-w);
@@ -485,18 +486,33 @@ textarea:disabled {
   font-size: 11px;
 }
 
+/*
+ * Floats over the list instead of being inserted above it.
+ *
+ * In normal flow this bar appears the moment something is selected and pushes
+ * every thumbnail down — so the item you just clicked jumps out from under the
+ * cursor. Taking it out of flow keeps the list still.
+ */
 .sidebar__selection-bar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  margin: 0 10px 8px;
-  padding: 6px 8px;
+  padding: 7px 8px 7px 11px;
   font-size: 11.5px;
   font-weight: 500;
   color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-soft) 100%, var(--surface) 60%);
+  backdrop-filter: blur(8px);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  animation: action-bar-in 0.14s ease-out;
 }
 
 .thumbnails {
@@ -509,7 +525,7 @@ textarea:disabled {
    * 4px shadow ring *outside* the frame, and this container scrolls — with no
    * padding the ring on the first thumbnail is sliced off by the clip edge.
    */
-  padding: 7px 10px 16px;
+  padding: 7px 10px 58px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -692,6 +708,22 @@ textarea:disabled {
   user-select: none;
 }
 
+/* Hold space: the cursor says the pointer will drag the page, not select. */
+.viewer__scroll--pan {
+  cursor: grab;
+}
+
+.viewer__scroll--pan * {
+  /* Nothing underneath should offer its own cursor while panning is armed. */
+  cursor: grab !important;
+}
+
+.viewer__scroll--panning,
+.viewer__scroll--panning * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
 .viewer--empty {
   align-items: center;
   justify-content: center;
@@ -785,13 +817,14 @@ textarea:disabled {
     border-color 0.1s ease;
 }
 
-.field-box:hover {
+.field-box:not(.field-box--selected):hover {
   background: rgba(79, 70, 229, 0.16);
   border-color: var(--accent);
 }
 
-.field-box--selected {
-  background: rgba(79, 70, 229, 0.14);
+.field-box--selected,
+.field-box--selected:hover {
+  background: rgba(79, 70, 229, 0.2);
   border: 1.5px solid var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
   z-index: 2;
@@ -881,6 +914,7 @@ textarea:disabled {
 /* ------------------------------------------------------------------- Panel */
 
 .panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: var(--panel-w);
@@ -918,7 +952,9 @@ textarea:disabled {
 .panel__content {
   flex: 1;
   overflow-y: auto;
-  padding: 0 14px 18px;
+  /* The bottom room is always there, selected or not: reserving it only when
+     the bar appears would reintroduce the shift this avoids. */
+  padding: 0 14px 60px;
 }
 
 .panel__empty {
@@ -927,18 +963,41 @@ textarea:disabled {
   color: var(--text-3);
 }
 
+/* Floats for the same reason as the sidebar's — see there. */
 .panel__selection-bar {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 12px;
-  padding: 7px 8px 7px 11px;
+  padding: 8px 8px 8px 12px;
   font-size: 11.5px;
   font-weight: 500;
   color: var(--accent);
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent-soft) 100%, var(--surface) 60%);
+  backdrop-filter: blur(8px);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  animation: action-bar-in 0.14s ease-out;
+}
+
+@keyframes action-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel__selection-bar,
+  .sidebar__selection-bar {
+    animation: none;
+  }
 }
 
 .panel__selection-bar > div {
@@ -1034,11 +1093,21 @@ textarea:disabled {
     box-shadow 0.13s ease;
 }
 
-.field-row:hover {
+/*
+ * Hover must not outrank selection.
+ *
+ * `.field-row:hover` is a class plus a pseudo-class, which beats the single
+ * class `.field-row--selected` on specificity — so pointing at a selected row
+ * repainted its accent border grey, reading as the border vanishing exactly
+ * when you point at it. Restricting hover to unselected rows keeps each
+ * state's colour, and selection gets its own hover treatment.
+ */
+.field-row:not(.field-row--selected):hover {
   border-color: var(--border-strong);
 }
 
-.field-row--selected {
+.field-row--selected,
+.field-row--selected:hover {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }

@@ -68,11 +68,20 @@ The release workflow signs on the runner, so add these under
 ### The short version
 
 ```bash
-# 1. Bump the version in package.json, src-tauri/Cargo.toml and tauri.conf.json
-# 2. Commit it
+pnpm version:set 1.1.0        # updates all three version files at once
+git commit -am "release: 1.1.0"
 git tag v1.1.0
-git push origin v1.1.0
+git push origin main --tags
 ```
+
+**The first release is the exception:** the version is already 1.0.0, so just
+tag and push.
+
+The tag and the three version files must agree. The updater compares the
+version in `latest.json` — taken from `tauri.conf.json` — against the running
+build, so a release tagged `v1.1.0` while the config still says `1.0.0` looks
+published but is never offered to anyone. The workflow checks this and fails
+the build rather than letting it through.
 
 The workflow in `.github/workflows/release.yml` builds, signs, generates
 `latest.json`, and opens a **draft** release. Review the assets, then publish

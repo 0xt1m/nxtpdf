@@ -28,6 +28,25 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      # A tag that disagrees with the version files produces a release nobody
+      # is ever offered: the updater compares latest.json's version (taken from
+      # tauri.conf.json) against the running build, so v1.1.0 carrying 1.0.0
+      # looks published but updates no one. Fail loudly instead.
+      - name: Check the tag matches the version files
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          cargo=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)
+
+          echo "tag=$tag package.json=$pkg tauri.conf.json=$conf Cargo.toml=$cargo"
+
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$conf" ] || [ "$tag" != "$cargo" ]; then
+            echo "::error::Version mismatch. Run 'pnpm version:set $tag', commit, then re-tag."
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2

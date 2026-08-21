@@ -512,9 +512,47 @@ textarea:disabled {
 }
 
 .field-box:hover,
-.field-box--focused {
+.field-box--selected {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
   border-width: 2px;
+}
+
+.field-box--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Read-only fields are shown but visibly inert. */
+.field-box--readonly {
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  border-color: var(--text-muted);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+/*
+ * In-place field editor: sits exactly on the field rectangle so what you type
+ * lines up with where it will print.
+ */
+.field-editor {
+  position: absolute;
+  padding: 0 2px;
+  margin: 0;
+  line-height: 1.1;
+  color: var(--text);
+  background: #fff;
+  border: 2px solid var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 2px 8px rgba(16, 22, 34, 0.25);
+  resize: none;
+  z-index: 2;
+}
+
+@media (prefers-color-scheme: dark) {
+  /* The page underneath is always white, so the editor stays light too. */
+  .field-editor {
+    color: #111;
+  }
 }
 
 .field-box__label {
@@ -868,4 +906,77 @@ textarea:disabled {
   color: inherit;
   font-size: 13px;
   line-height: 1;
+}
+
+/* ----------------------------------------------- Selection bars & shortcuts */
+
+.panel__selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised));
+  font-size: 11px;
+}
+
+.panel__selection-bar > div {
+  display: flex;
+  gap: 4px;
+}
+
+.panel__selection-bar button {
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.field-row {
+  cursor: pointer;
+}
+
+.field-row--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Inputs inside a row should not feel like part of the row's click target. */
+.field-row input,
+.field-row textarea,
+.field-row select {
+  cursor: auto;
+}
+
+.shortcuts {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.shortcuts h3 {
+  margin-bottom: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.shortcuts dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.shortcuts dt {
+  font-family: var(--mono);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.shortcuts dd {
+  margin: 0;
+  color: var(--text-muted);
 }

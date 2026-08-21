@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useStore } from '@/state/store';
+import { useStore, type SelectionModifiers } from '@/state/store';
 import { pageImageUrl, THUMBNAIL_DPI } from '@/lib/pageImage';
 import type { PageInfo } from '@/lib/types';
 
@@ -17,9 +17,9 @@ export function PageSidebar() {
   const renderingAvailable = useStore((s) => s.renderingAvailable);
 
   const setCurrentPage = useStore((s) => s.setCurrentPage);
-  const togglePageSelection = useStore((s) => s.togglePageSelection);
+  const selectPage = useStore((s) => s.selectPage);
   const selectAllPages = useStore((s) => s.selectAllPages);
-  const clearSelection = useStore((s) => s.clearSelection);
+  const clearPageSelection = useStore((s) => s.clearPageSelection);
   const rotatePage = useStore((s) => s.rotatePage);
   const deleteSelectedPages = useStore((s) => s.deleteSelectedPages);
   const movePage = useStore((s) => s.movePage);
@@ -47,7 +47,10 @@ export function PageSidebar() {
           <button onClick={selectAllPages} disabled={busy}>
             All
           </button>
-          <button onClick={clearSelection} disabled={busy || selectedPages.length === 0}>
+          <button
+            onClick={clearPageSelection}
+            disabled={busy || selectedPages.length === 0}
+          >
             None
           </button>
         </div>
@@ -63,7 +66,7 @@ export function PageSidebar() {
             title={
               selectedPages.length >= doc.pageCount
                 ? 'A document must keep at least one page'
-                : 'Delete selected pages'
+                : 'Delete selected pages (Del)'
             }
           >
             Delete
@@ -82,9 +85,9 @@ export function PageSidebar() {
             isDropTarget={dropIndex === page.index}
             renderingAvailable={renderingAvailable}
             busy={busy}
-            onSelect={(additive) => {
+            onSelect={(modifiers) => {
               setCurrentPage(page.index);
-              togglePageSelection(page.index, additive);
+              selectPage(page.index, modifiers);
             }}
             onRotate={(degrees) => void rotatePage(page.index, degrees)}
             onDragStart={() => setDragIndex(page.index)}
@@ -109,7 +112,7 @@ interface ThumbnailProps {
   isDropTarget: boolean;
   renderingAvailable: boolean;
   busy: boolean;
-  onSelect: (additive: boolean) => void;
+  onSelect: (modifiers: SelectionModifiers) => void;
   onRotate: (degrees: number) => void;
   onDragStart: () => void;
   onDragOver: () => void;
@@ -158,7 +161,12 @@ function Thumbnail({
         onDrop();
       }}
       onDragEnd={onDragEnd}
-      onClick={(event) => onSelect(event.ctrlKey || event.metaKey || event.shiftKey)}
+      onClick={(event) =>
+        onSelect({
+          toggle: event.ctrlKey || event.metaKey,
+          range: event.shiftKey,
+        })
+      }
     >
       <div className="thumbnail__frame" style={{ aspectRatio }}>
         {renderingAvailable ? (

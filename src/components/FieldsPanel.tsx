@@ -2,17 +2,16 @@ import { useEffect, useState } from 'react';
 import { useStore } from '@/state/store';
 import type { FormField } from '@/lib/types';
 
-interface FieldsPanelProps {
-  focusedField: string | null;
-  onFocusField: (name: string | null) => void;
-}
-
 /** Fill in an existing form. */
-export function FieldsPanel({ focusedField, onFocusField }: FieldsPanelProps) {
+export function FieldsPanel() {
   const doc = useStore((s) => s.doc);
   const fields = useStore((s) => s.fields);
+  const selectedFields = useStore((s) => s.selectedFields);
   const busy = useStore((s) => s.busy);
   const setCurrentPage = useStore((s) => s.setCurrentPage);
+  const selectField = useStore((s) => s.selectField);
+  const clearFieldSelection = useStore((s) => s.clearFieldSelection);
+  const deleteSelectedFields = useStore((s) => s.deleteSelectedFields);
 
   if (!doc) return null;
 
@@ -26,38 +25,61 @@ export function FieldsPanel({ focusedField, onFocusField }: FieldsPanelProps) {
   }
 
   return (
-    <div className="field-list">
-      {fields.map((field) => (
-        <FieldRow
-          key={field.name}
-          field={field}
-          busy={busy}
-          isFocused={focusedField === field.name}
-          onFocus={() => {
-            onFocusField(field.name);
-            if (field.pageIndex !== null) setCurrentPage(field.pageIndex);
-          }}
-        />
-      ))}
-    </div>
+    <>
+      {selectedFields.length > 0 && (
+        <div className="panel__selection-bar">
+          <span>{selectedFields.length} selected</span>
+          <div>
+            <button onClick={clearFieldSelection} disabled={busy}>
+              None
+            </button>
+            <button
+              className="button--danger"
+              onClick={deleteSelectedFields}
+              disabled={busy}
+              title="Delete selected fields (Del)"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="field-list">
+        {fields.map((field) => (
+          <FieldRow
+            key={field.name}
+            field={field}
+            busy={busy}
+            isSelected={selectedFields.includes(field.name)}
+            onSelect={(event) => {
+              selectField(field.name, {
+                toggle: event.ctrlKey || event.metaKey,
+                range: event.shiftKey,
+              });
+              if (field.pageIndex !== null) setCurrentPage(field.pageIndex);
+            }}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 
 interface FieldRowProps {
   field: FormField;
   busy: boolean;
-  isFocused: boolean;
-  onFocus: () => void;
+  isSelected: boolean;
+  onSelect: (event: React.MouseEvent) => void;
 }
 
-function FieldRow({ field, busy, isFocused, onFocus }: FieldRowProps) {
+function FieldRow({ field, busy, isSelected, onSelect }: FieldRowProps) {
   const setFieldValue = useStore((s) => s.setFieldValue);
-  const deleteField = useStore((s) => s.deleteField);
 
   // Local draft so typing stays responsive; committed on blur, not per key.
   const [draft, setDraft] = useState(field.value ?? '');
 
-  // Re-sync when the backend snapshot changes underneath us (undo, reload).
+  // Re-sync when the backend snapshot changes underneath us.
   useEffect(() => {
     setDraft(field.value ?? '');
   }, [field.value]);
@@ -71,8 +93,8 @@ function FieldRow({ field, busy, isFocused, onFocus }: FieldRowProps) {
 
   return (
     <div
-      className={`field-row${isFocused ? ' field-row--focused' : ''}`}
-      onFocus={onFocus}
+      className={`field-row${isSelected ? ' field-row--selected' : ''}`}
+      onClick={onSelect}
     >
       <div className="field-row__header">
         <label className="field-row__name" htmlFor={`field-${field.name}`}>
@@ -92,6 +114,7 @@ function FieldRow({ field, busy, isFocused, onFocus }: FieldRowProps) {
             maxLength={field.maxLength ?? undefined}
             onChange={(event) => setDraft(event.target.value)}
             onBlur={() => commit(draft)}
+            onKeyDown={(event) => event.stopPropagation()}
           />
         ) : (
           <input
@@ -103,6 +126,8 @@ function FieldRow({ field, busy, isFocused, onFocus }: FieldRowProps) {
             onChange={(event) => setDraft(event.target.value)}
             onBlur={() => commit(draft)}
             onKeyDown={(event) => {
+              // Keep Delete and Ctrl+A local to this input.
+              event.stopPropagation();
               if (event.key === 'Enter') event.currentTarget.blur();
             }}
           />
@@ -155,13 +180,6 @@ function FieldRow({ field, busy, isFocused, onFocus }: FieldRowProps) {
         {field.pageIndex !== null && (
           <span className="hint">page {field.pageIndex + 1}</span>
         )}
-        <button
-          className="button--link button--danger"
-          disabled={busy}
-          onClick={() => void deleteField(field.name)}
-        >
-          Delete field
-        </button>
       </div>
     </div>
   );

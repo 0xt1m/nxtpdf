@@ -26,7 +26,15 @@ export const openDocument = (path: string) =>
 
 export const newDocument = () => invoke<DocumentInfo>('new_document');
 
-export const closeDocument = () => invoke<void>('close_document');
+/** Closes one tab; resolves with whichever tab became active. */
+export const closeDocument = (id: number) =>
+  invoke<DocumentInfo | null>('close_document', { id });
+
+export const activateDocument = (id: number) =>
+  invoke<DocumentInfo>('activate_document', { id });
+
+/** Every open tab, in tab order. */
+export const listDocuments = () => invoke<DocumentInfo[]>('list_documents');
 
 export const documentInfo = () => invoke<DocumentInfo | null>('document_info');
 

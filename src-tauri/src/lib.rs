@@ -20,11 +20,13 @@ use crate::state::AppState;
 /// on top of a text-protocol round trip. A URI scheme lets the webview fetch
 /// them as ordinary images — binary, streamed, and cacheable by the webview.
 ///
-/// URL shape: `page/{index}/{dpi}/{revision}`
+/// URL shape: `page/{documentId}/{index}/{dpi}/{revision}`
 ///
-/// `revision` is not read by the handler; it exists so that editing the
-/// document produces a new URL and the webview's own cache cannot serve a
-/// stale page.
+/// Both `documentId` and `revision` exist to keep the webview's cache honest.
+/// The response is marked immutable, so any two requests sharing a URL share
+/// an image: without the id, page 1 of a newly opened file would collide with
+/// page 1 of the previous one — both start at revision 1 — and the old page
+/// would be served from cache until an edit happened to bump the counter.
 const PAGE_SCHEME: &str = "nxtpdf";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -80,6 +82,8 @@ pub fn run() {
             commands::open_document,
             commands::new_document,
             commands::close_document,
+            commands::activate_document,
+            commands::list_documents,
             commands::document_info,
             commands::save_document,
             commands::save_document_as,
@@ -123,19 +127,21 @@ pub fn run() {
                 let _ = app.emit("pdfium-unavailable", message);
             }
 
-            // Debug builds can auto-open a document, which makes the render
-            // path reproducible without driving the UI by hand:
-            //   NXTPDF_DEV_OPEN="C:\path\to\file.pdf" pnpm app:dev
+            // Debug builds can auto-open documents, which makes the render
+            // path reproducible without driving the UI by hand. Semicolon
+            // separated, one tab each:
+            //   NXTPDF_DEV_OPEN="C:\a.pdf;C:\b.pdf" pnpm app:dev
             #[cfg(debug_assertions)]
-            if let Ok(path) = std::env::var("NXTPDF_DEV_OPEN") {
-                match pdf::document::open(std::path::Path::new(&path)) {
-                    Ok(document) => {
-                        let state = app.state::<AppState>();
-                        *state.session.lock() =
-                            Some(state::DocumentSession::new(document, Some(path.into())));
-                        log::info!("NXTPDF_DEV_OPEN: opened document");
+            if let Ok(list) = std::env::var("NXTPDF_DEV_OPEN") {
+                for path in list.split(';').filter(|entry| !entry.is_empty()) {
+                    match pdf::document::open(std::path::Path::new(path)) {
+                        Ok(document) => {
+                            let state = app.state::<AppState>();
+                            state.workspace.lock().open(document, Some(path.into()));
+                            log::info!("NXTPDF_DEV_OPEN: opened {path}");
+                        }
+                        Err(error) => log::error!("NXTPDF_DEV_OPEN {path}: {error}"),
                     }
-                    Err(error) => log::error!("NXTPDF_DEV_OPEN failed: {error}"),
                 }
             }
 
@@ -145,8 +151,10 @@ pub fn run() {
             if let Ok(list) = std::env::var("NXTPDF_DEV_APPEND") {
                 let state = app.state::<AppState>();
                 for path in list.split(';').filter(|p| !p.is_empty()) {
-                    let mut guard = state.session.lock();
-                    let Some(session) = guard.as_mut() else { continue };
+                    let mut workspace = state.workspace.lock();
+                    let Some(session) = workspace.active_mut() else {
+                        continue;
+                    };
 
                     match pdf::document::open(std::path::Path::new(path))
                         .and_then(|extra| pdf::document::append_document(&mut session.doc, extra))
@@ -197,10 +205,10 @@ fn open_in_app(app: &tauri::AppHandle, path: &std::path::Path) {
     match pdf::document::open(path) {
         Ok(document) => {
             let state = app.state::<AppState>();
-            *state.session.lock() = Some(state::DocumentSession::new(
-                document,
-                Some(path.to_path_buf()),
-            ));
+            state
+                .workspace
+                .lock()
+                .open(document, Some(path.to_path_buf()));
             log::info!("opened {} from the command line", path.display());
 
             // The frontend owns a snapshot, so it has to be told to re-read.
@@ -210,17 +218,18 @@ fn open_in_app(app: &tauri::AppHandle, path: &std::path::Path) {
     }
 }
 
-/// Parses `page/{index}/{dpi}/{revision}` out of a page-scheme request.
-fn parse_page_request(path: &str) -> Option<(usize, f32)> {
+/// Parses `page/{documentId}/{index}/{dpi}/{revision}` out of a request.
+fn parse_page_request(path: &str) -> Option<(state::DocumentId, usize, f32)> {
     let mut parts = path.trim_start_matches('/').split('/');
 
     if parts.next()? != "page" {
         return None;
     }
 
+    let document = parts.next()?.parse::<state::DocumentId>().ok()?;
     let index = parts.next()?.parse::<usize>().ok()?;
     let dpi = parts.next()?.parse::<f32>().ok()?;
-    Some((index, dpi))
+    Some((document, index, dpi))
 }
 
 fn error_response(status: StatusCode, message: &str) -> Response<Vec<u8>> {
@@ -235,17 +244,20 @@ fn error_response(status: StatusCode, message: &str) -> Response<Vec<u8>> {
 fn serve_page(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     log::info!("page request: {}", request.uri());
 
-    let Some((index, dpi)) = parse_page_request(request.uri().path()) else {
+    let Some((document, index, dpi)) = parse_page_request(request.uri().path()) else {
         log::error!("unparseable page URL: {}", request.uri());
         return error_response(
             StatusCode::BAD_REQUEST,
-            "Expected a URL of the form page/{index}/{dpi}/{revision}",
+            "Expected a URL of the form page/{documentId}/{index}/{dpi}/{revision}",
         );
     };
 
     let state = app.state::<AppState>();
 
-    let rendered = state.with_document(|session| {
+    // Addressed by id, not "whichever tab is active": a request still in
+    // flight when the user switches tabs must resolve against the document it
+    // was issued for.
+    let rendered = state.with_document_id(document, |session| {
         // Borrow the serialized bytes only long enough to copy them; holding
         // the session lock across a render would block every other command.
         let bytes = session.bytes()?.to_vec();
@@ -255,7 +267,7 @@ fn serve_page(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Ve
     let bytes = match rendered {
         Ok(bytes) => bytes,
         Err(error) => {
-            log::error!("page {index}: no document to render ({error})");
+            log::error!("document {document}, page {index}: nothing to render ({error})");
             return error_response(StatusCode::NOT_FOUND, &error.to_string());
         }
     };
@@ -325,26 +337,32 @@ mod tests {
 
     #[test]
     fn parses_a_well_formed_page_url() {
-        assert_eq!(parse_page_request("/page/3/150/7"), Some((3, 150.0)));
+        assert_eq!(parse_page_request("/page/2/3/150/7"), Some((2, 3, 150.0)));
     }
 
     #[test]
     fn tolerates_a_missing_leading_slash() {
-        assert_eq!(parse_page_request("page/0/96/1"), Some((0, 96.0)));
+        assert_eq!(parse_page_request("page/1/0/96/1"), Some((1, 0, 96.0)));
     }
 
     #[test]
     fn rejects_the_wrong_prefix() {
-        assert_eq!(parse_page_request("/thumb/0/96/1"), None);
+        assert_eq!(parse_page_request("/thumb/1/0/96/1"), None);
     }
 
     #[test]
     fn rejects_a_non_numeric_index() {
-        assert_eq!(parse_page_request("/page/x/96/1"), None);
+        assert_eq!(parse_page_request("/page/1/x/96/1"), None);
+    }
+
+    #[test]
+    fn rejects_a_url_missing_the_document_id() {
+        // The pre-tabs shape, which would otherwise parse as document 0.
+        assert_eq!(parse_page_request("/page/0/96"), None);
     }
 
     #[test]
     fn rejects_a_truncated_url() {
-        assert_eq!(parse_page_request("/page/0"), None);
+        assert_eq!(parse_page_request("/page/1/0"), None);
     }
 }

@@ -81,6 +81,7 @@ export function PageSidebar() {
           <Thumbnail
             key={page.index}
             page={page}
+            documentId={doc.id}
             revision={doc.revision}
             isCurrent={page.index === currentPage}
             isSelected={selectedPages.includes(page.index)}
@@ -108,6 +109,7 @@ export function PageSidebar() {
 
 interface ThumbnailProps {
   page: PageInfo;
+  documentId: number;
   revision: number;
   isCurrent: boolean;
   isSelected: boolean;
@@ -124,6 +126,7 @@ interface ThumbnailProps {
 
 function Thumbnail({
   page,
+  documentId,
   revision,
   isCurrent,
   isSelected,
@@ -173,7 +176,7 @@ function Thumbnail({
       <div className="thumbnail__frame" style={{ aspectRatio }}>
         {renderingAvailable ? (
           <img
-            src={pageImageUrl(page.index, THUMBNAIL_DPI, revision)}
+            src={pageImageUrl(documentId, page.index, THUMBNAIL_DPI, revision)}
             alt={`Page ${page.index + 1}`}
             loading="lazy"
             draggable={false}

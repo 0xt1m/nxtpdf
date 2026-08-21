@@ -16,12 +16,13 @@ use crate::pdf::document::{self, DocumentInfo};
 use crate::pdf::forms::{self, FormField, NewField};
 use crate::printing;
 use crate::printing::types::{PrintJobResult, PrintSettings, PrinterCapabilities, PrinterInfo};
-use crate::state::{AppState, DocumentSession};
+use crate::state::{AppState, DocumentId, DocumentSession};
 
 /// Builds the snapshot the frontend renders from.
 fn snapshot(session: &DocumentSession) -> DocumentInfo {
     document::describe(
         &session.doc,
+        session.id,
         session.display_name(),
         session.path.clone(),
         session.dirty,
@@ -45,13 +46,28 @@ where
 // Document lifecycle
 // ---------------------------------------------------------------------------
 
+/// Opens a file as a new tab, or focuses the tab already showing it.
+///
+/// Re-opening a path that is already open would give two independent models of
+/// one file, whose saves would overwrite each other.
 #[tauri::command]
 pub fn open_document(state: State<'_, AppState>, path: String) -> AppResult<DocumentInfo> {
     let path = PathBuf::from(path);
+
+    {
+        let mut workspace = state.workspace.lock();
+        if let Some(existing) = workspace.find_by_path(&path) {
+            workspace.activate(existing);
+            let session = workspace.by_id_mut(existing).ok_or(AppError::NoDocument)?;
+            return Ok(snapshot(session));
+        }
+    }
+
     let doc = document::open(&path)?;
 
-    let mut guard = state.session.lock();
-    let session = guard.insert(DocumentSession::new(doc, Some(path)));
+    let mut workspace = state.workspace.lock();
+    let id = workspace.open(doc, Some(path));
+    let session = workspace.by_id_mut(id).ok_or(AppError::NoDocument)?;
     Ok(snapshot(session))
 }
 
@@ -59,20 +75,50 @@ pub fn open_document(state: State<'_, AppState>, path: String) -> AppResult<Docu
 pub fn new_document(state: State<'_, AppState>) -> AppResult<DocumentInfo> {
     let doc = document::blank()?;
 
-    let mut guard = state.session.lock();
-    let session = guard.insert(DocumentSession::new(doc, None));
+    let mut workspace = state.workspace.lock();
+    let id = workspace.open(doc, None);
+    let session = workspace.by_id_mut(id).ok_or(AppError::NoDocument)?;
     Ok(snapshot(session))
 }
 
+/// Closes one tab. Returns whichever tab became active, or `None` if that was
+/// the last one.
 #[tauri::command]
-pub fn close_document(state: State<'_, AppState>) {
-    *state.session.lock() = None;
+pub fn close_document(
+    state: State<'_, AppState>,
+    id: DocumentId,
+) -> AppResult<Option<DocumentInfo>> {
+    let mut workspace = state.workspace.lock();
+    let active = workspace.close(id);
+
+    Ok(active.and_then(|id| workspace.by_id_mut(id).map(|session| snapshot(session))))
+}
+
+#[tauri::command]
+pub fn activate_document(
+    state: State<'_, AppState>,
+    id: DocumentId,
+) -> AppResult<DocumentInfo> {
+    let mut workspace = state.workspace.lock();
+    if !workspace.activate(id) {
+        return Err(AppError::NoDocument);
+    }
+
+    let session = workspace.by_id_mut(id).ok_or(AppError::NoDocument)?;
+    Ok(snapshot(session))
+}
+
+/// Every open tab, in tab order — what the tab bar renders from.
+#[tauri::command]
+pub fn list_documents(state: State<'_, AppState>) -> AppResult<Vec<DocumentInfo>> {
+    let mut workspace = state.workspace.lock();
+    Ok(workspace.iter_mut().map(|session| snapshot(session)).collect())
 }
 
 #[tauri::command]
 pub fn document_info(state: State<'_, AppState>) -> AppResult<Option<DocumentInfo>> {
-    let mut guard = state.session.lock();
-    Ok(guard.as_mut().map(|session| snapshot(session)))
+    let mut workspace = state.workspace.lock();
+    Ok(workspace.active_mut().map(|session| snapshot(session)))
 }
 
 #[tauri::command]

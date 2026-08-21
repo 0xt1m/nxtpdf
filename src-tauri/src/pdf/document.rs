@@ -43,6 +43,9 @@ pub struct PageInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentInfo {
+    /// Identifies this tab. Also namespaces its page-image URLs, so two
+    /// documents can never collide in the webview's cache.
+    pub id: u64,
     pub name: String,
     pub path: Option<String>,
     pub page_count: usize,
@@ -198,6 +201,7 @@ fn normalize_rotation(degrees: i64) -> i64 {
 
 pub fn describe(
     doc: &Document,
+    id: u64,
     name: String,
     path: Option<PathBuf>,
     dirty: bool,
@@ -226,6 +230,7 @@ pub fn describe(
         .collect();
 
     DocumentInfo {
+        id,
         name,
         path: path.map(|p| p.to_string_lossy().into_owned()),
         page_count: ids.len(),

@@ -38,6 +38,11 @@ const DEFAULT_SIZE: Record<AddableKind, { width: number; height: number }> = {
   choice: { width: 160, height: 22 },
 };
 
+/** Default size in points, for a click that places without dragging. */
+export function defaultFieldSize(kind: AddableKind): { width: number; height: number } {
+  return DEFAULT_SIZE[kind];
+}
+
 /** Stem of the auto-generated name for each kind. */
 const DEFAULT_NAME: Record<AddableKind, string> = {
   text: 'new_input',
@@ -81,9 +86,19 @@ export type Focus = 'pages' | 'fields' | null;
 export type PrintPreset = 'all' | 'selected';
 
 interface AppState {
-  // --- Document ---
+  // --- Documents ---
+  /** Every open tab, in tab order. */
+  docs: DocumentInfo[];
+  /** The active tab's snapshot, or null when nothing is open. */
   doc: DocumentInfo | null;
   fields: FormField[];
+  /**
+   * The field type armed by the Add buttons, if any.
+   *
+   * While armed, dragging on the page draws the new field rather than
+   * selecting one, and the toolbar button reads as pressed.
+   */
+  pendingField: AddableKind | null;
 
   // --- UI ---
   currentPage: number;
@@ -121,6 +136,17 @@ interface AppState {
   nudgeZoom: (delta: number) => void;
   setCurrentPage: (index: number) => void;
 
+  activateTab: (id: number) => Promise<void>;
+  closeTab: (id: number) => Promise<void>;
+
+  armField: (kind: AddableKind) => void;
+  disarmField: () => void;
+  /** Places the armed field at a rectangle drawn on the page. */
+  placeArmedField: (
+    pageIndex: number,
+    rect: [number, number, number, number]
+  ) => Promise<void>;
+
   selectPage: (index: number, modifiers: SelectionModifiers) => void;
   selectAllPages: () => void;
   clearPageSelection: () => void;
@@ -130,7 +156,6 @@ interface AppState {
   refresh: () => Promise<void>;
   newDocument: () => Promise<void>;
   openDocument: (path: string) => Promise<void>;
-  closeDocument: () => Promise<void>;
   save: () => Promise<void>;
   saveAs: (path: string) => Promise<void>;
 
@@ -231,14 +256,24 @@ export const useStore = create<AppState>((set, get) => {
     }
   }
 
-  /** Applies a new document snapshot and reloads the field list with it. */
+  /**
+   * Applies a new snapshot of the active document.
+   *
+   * The tab list is re-read alongside it so titles and their unsaved-changes
+   * markers cannot drift from the document they describe.
+   */
   async function adopt(doc: DocumentInfo) {
-    const fields = doc.hasAcroForm ? await ipc.listFormFields() : [];
+    const [fields, docs] = await Promise.all([
+      doc.hasAcroForm ? ipc.listFormFields() : Promise.resolve([]),
+      ipc.listDocuments(),
+    ]);
+
     const pageCount = doc.pageCount;
     const names = new Set(fields.map((field) => field.name));
 
     set((state) => ({
       doc,
+      docs,
       fields,
       // Keep the viewport and both selections valid after pages or fields go.
       currentPage: Math.min(state.currentPage, Math.max(0, pageCount - 1)),
@@ -247,9 +282,19 @@ export const useStore = create<AppState>((set, get) => {
     }));
   }
 
+  /** Remembers where each tab was, so switching back lands in the same place. */
+  const views = new Map<number, { currentPage: number; zoom: number }>();
+
+  function rememberView() {
+    const { doc, currentPage, zoom } = get();
+    if (doc) views.set(doc.id, { currentPage, zoom });
+  }
+
   return {
+    docs: [],
     doc: null,
     fields: [],
+    pendingField: null,
     currentPage: 0,
     selectedPages: [],
     selectedFields: [],
@@ -352,14 +397,17 @@ export const useStore = create<AppState>((set, get) => {
 
     newDocument: async () => {
       await run(async () => {
-        await adopt(await ipc.newDocument());
+        rememberView();
+        // Reset the viewport before adopting: a new tab starts at page one
+        // regardless of where the previous tab was scrolled to.
         set({ currentPage: 0, selectedPages: [], selectedFields: [], focus: null });
+        await adopt(await ipc.newDocument());
       });
     },
 
     openDocument: async (path) => {
       await run(async () => {
-        await adopt(await ipc.openDocument(path));
+        rememberView();
         set({
           currentPage: 0,
           selectedPages: [],
@@ -367,16 +415,60 @@ export const useStore = create<AppState>((set, get) => {
           focus: null,
           panel: 'pages',
         });
+
+        const opened = await ipc.openDocument(path);
+
+        // The backend focuses an already-open tab rather than duplicating it,
+        // so restore that tab's viewport instead of starting at page one.
+        const remembered = views.get(opened.id);
+        if (remembered) set(remembered);
+
+        await adopt(opened);
       });
     },
 
-    closeDocument: async () => {
+    activateTab: async (id) => {
+      if (get().doc?.id === id) return;
+
       await run(async () => {
-        await ipc.closeDocument();
+        rememberView();
+        const active = await ipc.activateDocument(id);
+
+        set({
+          ...(views.get(id) ?? { currentPage: 0, zoom: 1 }),
+          selectedPages: [],
+          selectedFields: [],
+          focus: null,
+          pendingField: null,
+        });
+
+        await adopt(active);
+      });
+    },
+
+    closeTab: async (id) => {
+      await run(async () => {
+        views.delete(id);
+        const next = await ipc.closeDocument(id);
+
+        if (next) {
+          set({
+            ...(views.get(next.id) ?? { currentPage: 0, zoom: 1 }),
+            selectedPages: [],
+            selectedFields: [],
+            focus: null,
+          });
+          await adopt(next);
+          return;
+        }
+
+        // That was the last tab.
         set({
           doc: null,
+          docs: [],
           fields: [],
           printDialogOpen: false,
+          pendingField: null,
           currentPage: 0,
           selectedPages: [],
           selectedFields: [],
@@ -475,6 +567,49 @@ export const useStore = create<AppState>((set, get) => {
             ? [...state.selectedFields.filter((item) => item !== name), renamed]
             : state.selectedFields,
         }));
+      });
+    },
+
+    armField: (kind) =>
+      // Clicking the armed tool again puts it away, which is what a pressed
+      // button implies.
+      set((state) => ({
+        pendingField: state.pendingField === kind ? null : kind,
+      })),
+
+    disarmField: () => set({ pendingField: null }),
+
+    placeArmedField: async (pageIndex, rect) => {
+      const { pendingField, fields } = get();
+      if (!pendingField) return;
+
+      const name = nextFieldName(
+        pendingField,
+        fields.map((field) => field.name)
+      );
+
+      await run(async () => {
+        const updated = await ipc.createFormField({
+          pageIndex,
+          name,
+          kind: pendingField,
+          rect,
+          fontSize: pendingField === 'text' ? 10 : null,
+          multiline: false,
+          required: false,
+          maxLength: null,
+          options: pendingField === 'choice' ? ['Option 1', 'Option 2'] : [],
+        });
+        await adopt(updated);
+
+        fieldAnchor = name;
+        set({
+          selectedFields: [name],
+          focus: 'fields',
+          panel: 'fields',
+          // One draw places one field, so the tool puts itself away.
+          pendingField: null,
+        });
       });
     },
 

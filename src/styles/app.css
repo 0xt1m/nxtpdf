@@ -332,8 +332,8 @@ textarea:disabled {
 
 .app {
   display: grid;
-  /* The banner and add-strip rows collapse to zero when not rendered. */
-  grid-template-rows: var(--toolbar-h) auto auto 1fr var(--status-h);
+  /* Banner, tab bar and add-strip rows collapse to zero when not rendered. */
+  grid-template-rows: var(--toolbar-h) auto auto auto 1fr var(--status-h);
   height: 100%;
   background: var(--bg);
 }
@@ -504,7 +504,12 @@ textarea:disabled {
   overflow-y: auto;
   list-style: none;
   margin: 0;
-  padding: 0 10px 14px;
+  /*
+   * The top padding is not decorative. Selection draws a 2px outline plus a
+   * 4px shadow ring *outside* the frame, and this container scrolls — with no
+   * padding the ring on the first thumbnail is sliced off by the clip edge.
+   */
+  padding: 7px 10px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1307,4 +1312,105 @@ textarea:disabled {
 .status-bar__error button {
   padding: 2px;
   color: inherit;
+}
+
+/* ---------------------------------------------------------------- Tab bar */
+
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 6px 10px 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+/* The strip scrolls when tabs overflow; the bar itself must not gain a rail. */
+.tab-bar::-webkit-scrollbar {
+  height: 0;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 7px 6px 7px 12px;
+  font-size: 12px;
+  color: var(--text-3);
+  background: transparent;
+  border-radius: var(--radius) var(--radius) 0 0;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background 0.13s ease,
+    color 0.13s ease;
+}
+
+.tab:hover {
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.tab--active,
+.tab--active:hover {
+  color: var(--text);
+  background: var(--bg);
+  /* Seats the active tab against the content below it. */
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.tab__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab__dirty {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+
+.tab__close {
+  flex: none;
+  padding: 2px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.13s ease;
+}
+
+.tab:hover .tab__close,
+.tab--active .tab__close {
+  opacity: 1;
+}
+
+/* --------------------------------------------------- Placing a new field */
+
+.page-surface--drawing {
+  cursor: crosshair;
+}
+
+/* While a tool is armed the existing fields must not swallow the drag. */
+.field-box--inert {
+  pointer-events: none;
+}
+
+.draw-box {
+  position: absolute;
+  background: var(--accent-soft);
+  border: 1.5px dashed var(--accent);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.field-toolbar__button--armed,
+.field-toolbar__button--armed:hover:not(:disabled) {
+  color: var(--accent-text);
+  background: var(--accent);
+  border-color: var(--accent);
 }

@@ -6,6 +6,7 @@ import { PageSidebar } from '@/components/PageSidebar';
 import { Viewer } from '@/components/Viewer';
 import { FieldsPanel } from '@/components/FieldsPanel';
 import { FieldToolbar } from '@/components/FieldToolbar';
+import { TabBar } from '@/components/TabBar';
 import { PrintDialog } from '@/components/PrintDialog';
 import { StatusBar } from '@/components/StatusBar';
 import { UpdateBanner } from '@/components/UpdateBanner';
@@ -18,6 +19,7 @@ const SHORTCUTS: { keys: string[]; action: string }[] = [
   { keys: ['Ctrl', 'S'], action: 'Save' },
   { keys: ['Ctrl', 'Shift', 'S'], action: 'Save As' },
   { keys: ['Ctrl', 'O'], action: 'Open' },
+  { keys: ['Ctrl', 'W'], action: 'Close tab' },
   { keys: ['Ctrl', 'P'], action: 'Print' },
   { keys: ['Ctrl', 'Shift', 'P'], action: 'Print selected pages' },
   { keys: ['Del'], action: 'Delete selected pages or fields' },
@@ -81,6 +83,7 @@ export default function App() {
     <div className="app">
       <Toolbar onPrint={() => openPrintDialog('all')} />
       <UpdateBanner updater={updater} />
+      <TabBar />
       <FieldToolbar />
 
       <div className="app__body">

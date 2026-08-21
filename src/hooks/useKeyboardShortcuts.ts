@@ -7,8 +7,32 @@
  */
 
 import { useEffect } from 'react';
+import { ask } from '@tauri-apps/plugin-dialog';
 import { useStore } from '@/state/store';
 import { openDocument, saveDocument, saveDocumentAs } from '@/lib/fileActions';
+
+/**
+ * Closes the active tab, confirming first if it has unsaved changes.
+ *
+ * Ctrl+W is a reflex, so it must not be the one path that discards work
+ * silently.
+ */
+async function closeActiveTab(): Promise<void> {
+  const { doc, closeTab } = useStore.getState();
+  if (!doc) return;
+
+  if (doc.dirty) {
+    const discard = await ask(`Close “${doc.name}” without saving your changes?`, {
+      title: 'Unsaved changes',
+      kind: 'warning',
+      okLabel: 'Discard',
+      cancelLabel: 'Keep editing',
+    });
+    if (!discard) return;
+  }
+
+  await closeTab(doc.id);
+}
 
 /** True when the event came from somewhere the user is typing. */
 function isTextEntry(target: EventTarget | null): boolean {
@@ -46,6 +70,16 @@ export function useKeyboardShortcuts(): void {
             event.preventDefault();
             void openDocument();
             return;
+
+          case 'w': {
+            const active = state.doc;
+            if (!active) return;
+            event.preventDefault();
+            // Unsaved work is confirmed in the tab bar; here it would be a
+            // silent discard, so route through the same guarded path.
+            void closeActiveTab();
+            return;
+          }
 
           case 'p':
             // Always preventDefault: the webview has its own Ctrl+P that would
@@ -118,6 +152,12 @@ export function useKeyboardShortcuts(): void {
         event.preventDefault();
         const step = event.shiftKey ? 10 : 1;
         void state.nudgeSelectedFields(nudge[0] * step, nudge[1] * step);
+        return;
+      }
+
+      if (event.key === 'Escape' && state.pendingField) {
+        event.preventDefault();
+        state.disarmField();
         return;
       }
 

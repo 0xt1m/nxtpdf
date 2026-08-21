@@ -24,9 +24,12 @@ export function FieldToolbar() {
   const doc = useStore((s) => s.doc);
   const busy = useStore((s) => s.busy);
   const currentPage = useStore((s) => s.currentPage);
-  const addField = useStore((s) => s.addField);
+  const pendingField = useStore((s) => s.pendingField);
+  const armField = useStore((s) => s.armField);
 
   if (!doc) return null;
+
+  const armed = TOOLS.find((tool) => tool.kind === pendingField);
 
   return (
     <div className="field-toolbar">
@@ -35,17 +38,24 @@ export function FieldToolbar() {
       {TOOLS.map(({ kind, label, Icon, hint }) => (
         <button
           key={kind}
-          className="field-toolbar__button"
+          className={`field-toolbar__button${
+            pendingField === kind ? ' field-toolbar__button--armed' : ''
+          }`}
           disabled={busy}
+          aria-pressed={pendingField === kind}
           title={hint}
-          onClick={() => void addField(kind)}
+          onClick={() => armField(kind)}
         >
           <Icon size={15} />
           {label}
         </button>
       ))}
 
-      <span className="field-toolbar__hint">Drag a field on the page to move it</span>
+      <span className="field-toolbar__hint">
+        {armed
+          ? `Drag on the page to place the ${armed.label.toLowerCase()} — Esc to cancel`
+          : 'Drag a field on the page to move it'}
+      </span>
     </div>
   );
 }

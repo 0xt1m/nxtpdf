@@ -23,6 +23,8 @@ export interface PageInfo {
 }
 
 export interface DocumentInfo {
+  /** Identifies this tab, and namespaces its page-image URLs. */
+  id: number;
   name: string;
   path: string | null;
   pageCount: number;

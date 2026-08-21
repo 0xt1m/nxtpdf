@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useStore } from '@/state/store';
+import { defaultFieldSize, useStore } from '@/state/store';
 import { pageImageUrl, VIEWER_DPI } from '@/lib/pageImage';
 import {
   pdfRectToScreen,
@@ -17,6 +17,9 @@ import {
 
 /** Movement below this is a click, not a drag. */
 const DRAG_THRESHOLD_PX = 3;
+
+/** Below this a drawn rectangle counts as a click, and a default size is used. */
+const MIN_DRAW_PX = 6;
 
 /** Smallest field a drag may produce, in CSS pixels. */
 const MIN_FIELD_PX = 8;
@@ -59,9 +62,14 @@ export function Viewer() {
   const moveField = useStore((s) => s.moveField);
   const setPanel = useStore((s) => s.setPanel);
   const nudgeZoom = useStore((s) => s.nudgeZoom);
+  const pendingField = useStore((s) => s.pendingField);
+  const placeArmedField = useStore((s) => s.placeArmedField);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [drawBox, setDrawBox] = useState<ScreenRect | null>(null);
+  const drawStart = useRef<{ x: number; y: number } | null>(null);
 
   // Ctrl+wheel zooms instead of scrolling. This has to be a non-passive
   // listener: React attaches wheel handlers passively, and a passive listener
@@ -84,6 +92,11 @@ export function Viewer() {
   useEffect(() => {
     setEditing(null);
   }, [currentPage]);
+
+  // Arming a tool cancels any in-progress edit; they are different modes.
+  useEffect(() => {
+    if (pendingField) setEditing(null);
+  }, [pendingField]);
 
   if (!doc) {
     return (
@@ -120,24 +133,91 @@ export function Viewer() {
       field.pageIndex === currentPage && isPositioned(field)
   );
 
+  /** Pointer position relative to the page surface, in CSS pixels. */
+  function surfacePoint(event: React.PointerEvent) {
+    const surface = surfaceRef.current;
+    if (!surface) return null;
+    const bounds = surface.getBoundingClientRect();
+    return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+  }
+
+  function beginDraw(event: React.PointerEvent) {
+    const point = surfacePoint(event);
+    if (!point) return;
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drawStart.current = point;
+    setDrawBox({ left: point.x, top: point.y, width: 0, height: 0 });
+  }
+
+  function continueDraw(event: React.PointerEvent) {
+    const start = drawStart.current;
+    if (!start) return;
+    const point = surfacePoint(event);
+    if (!point) return;
+
+    setDrawBox({
+      left: Math.min(start.x, point.x),
+      top: Math.min(start.y, point.y),
+      width: Math.abs(point.x - start.x),
+      height: Math.abs(point.y - start.y),
+    });
+  }
+
+  function finishDraw() {
+    const start = drawStart.current;
+    const box = drawBox;
+    drawStart.current = null;
+    setDrawBox(null);
+
+    if (!start || !box || !page || !pendingField) return;
+
+    // A click without a meaningful drag still places a field, at the default
+    // size for its kind — insisting on a drag would just be pedantic.
+    const drawn =
+      box.width >= MIN_DRAW_PX && box.height >= MIN_DRAW_PX
+        ? box
+        : {
+            left: start.x,
+            top: start.y,
+            width: defaultFieldSize(pendingField).width * scale,
+            height: defaultFieldSize(pendingField).height * scale,
+          };
+
+    void placeArmedField(currentPage, roundRect(screenRectToPdf(drawn, page, scale)));
+  }
+
+  function cancelDraw() {
+    drawStart.current = null;
+    setDrawBox(null);
+  }
+
   return (
     <main className="viewer">
       <div className="viewer__scroll" ref={scrollRef}>
         <div
-          className="page-surface"
+          ref={surfaceRef}
+          className={`page-surface${pendingField ? ' page-surface--drawing' : ''}`}
           style={{ width: displayWidth, height: displayHeight }}
-          // Pressing bare page, rather than a field, drops the selection.
           onPointerDown={(event) => {
+            if (pendingField) {
+              beginDraw(event);
+              return;
+            }
+            // Pressing bare page, rather than a field, drops the selection.
             if (event.target === event.currentTarget) {
               clearFieldSelection();
               setEditing(null);
             }
           }}
+          onPointerMove={continueDraw}
+          onPointerUp={finishDraw}
+          onPointerCancel={cancelDraw}
         >
           {renderingAvailable ? (
             <img
               className="page-surface__image"
-              src={pageImageUrl(currentPage, VIEWER_DPI, doc.revision)}
+              src={pageImageUrl(doc.id, currentPage, VIEWER_DPI, doc.revision)}
               alt={`Page ${currentPage + 1}`}
               draggable={false}
             />
@@ -158,6 +238,7 @@ export function Viewer() {
               scale={scale}
               selected={selectedFields.includes(field.name)}
               editing={editing === field.name}
+              inert={pendingField !== null}
               onSelect={(modifiers) => {
                 selectField(field.name, modifiers);
                 setPanel('fields');
@@ -179,6 +260,17 @@ export function Viewer() {
               onCancel={() => setEditing(null)}
             />
           ))}
+          {drawBox && (
+            <div
+              className="draw-box"
+              style={{
+                left: drawBox.left,
+                top: drawBox.top,
+                width: drawBox.width,
+                height: drawBox.height,
+              }}
+            />
+          )}
         </div>
       </div>
 
@@ -211,6 +303,8 @@ interface FieldOverlayProps {
   scale: number;
   selected: boolean;
   editing: boolean;
+  /** True while an Add tool is armed, so drawing passes straight through. */
+  inert: boolean;
   onSelect: (modifiers: { toggle: boolean; range: boolean }) => void;
   onEdit: () => void;
   onToggle: () => void;
@@ -233,6 +327,7 @@ function FieldOverlay({
   scale,
   selected,
   editing,
+  inert,
   onSelect,
   onEdit,
   onToggle,
@@ -449,6 +544,7 @@ function FieldOverlay({
     selected && 'field-box--selected',
     field.readOnly && 'field-box--readonly',
     preview && 'field-box--dragging',
+    inert && 'field-box--inert',
   ]
     .filter(Boolean)
     .join(' ');

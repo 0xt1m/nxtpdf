@@ -26,12 +26,19 @@ export const THUMBNAIL_DPI = 32;
 /**
  * URL for one rendered page.
  *
- * `revision` is not read by the backend. It is in the path purely so that
- * editing the document yields a new URL — otherwise the webview's HTTP cache
- * would happily serve the pre-edit image forever.
+ * Neither `documentId` nor `revision` is read by the backend as data — both
+ * exist to keep the webview's cache honest. The response is marked immutable,
+ * so any two requests sharing a URL share an image. Without the document id,
+ * page 1 of a newly opened file would collide with page 1 of the previous one
+ * (both start at revision 1) and the stale page would be served from cache.
  */
-export function pageImageUrl(pageIndex: number, dpi: number, revision: number): string {
-  const path = `page/${pageIndex}/${Math.round(dpi)}/${revision}`;
+export function pageImageUrl(
+  documentId: number,
+  pageIndex: number,
+  dpi: number,
+  revision: number
+): string {
+  const path = `page/${documentId}/${pageIndex}/${Math.round(dpi)}/${revision}`;
   return isHttpStyleScheme
     ? `http://${SCHEME}.localhost/${path}`
     : `${SCHEME}://localhost/${path}`;

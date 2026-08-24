@@ -1616,3 +1616,71 @@ textarea:disabled {
   font-size: 12px;
   color: var(--text-3);
 }
+
+/* --- Editing the page's own text ---------------------------------------- */
+
+.text-layer__loading {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+}
+
+/*
+  One stretch of page text. Deliberately near-invisible until hovered: the
+  boxes blanket the page, and drawing a border round every line would bury the
+  document under its own scaffolding.
+*/
+.text-run {
+  position: absolute;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: text;
+  transition:
+    background-color 90ms ease,
+    border-color 90ms ease;
+}
+
+.text-run:hover,
+.text-run:focus-visible {
+  background: rgba(79, 124, 255, 0.13);
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Editing this one cannot keep its font, so it is marked before it is clicked. */
+.text-run--substitutes:hover,
+.text-run--substitutes:focus-visible {
+  background: rgba(214, 158, 46, 0.16);
+  border-color: #b7791f;
+}
+
+.text-run__editor {
+  position: absolute;
+  padding: 0 1px;
+  font-family: var(--font);
+  line-height: 1;
+  color: #000;
+  background: #fff;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(79, 124, 255, 0.18);
+}
+
+.field-toolbar__divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border);
+}

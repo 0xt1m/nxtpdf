@@ -13,6 +13,7 @@ import {
   type FormField,
   type PageInfo,
   type PositionedField,
+  type TextRun,
 } from '@/lib/types';
 
 /** Movement below this is a click, not a drag. */
@@ -86,6 +87,12 @@ export function Viewer() {
   const fieldDraft = useStore((s) => s.fieldDraft);
   const setFieldDraft = useStore((s) => s.setFieldDraft);
   const editAdjacentField = useStore((s) => s.editAdjacentField);
+  const textMode = useStore((s) => s.textMode);
+  const textRuns = useStore((s) => s.textRuns);
+  const loadTextRuns = useStore((s) => s.loadTextRuns);
+  const editingTextRun = useStore((s) => s.editingTextRun);
+  const editTextRun = useStore((s) => s.editTextRun);
+  const setTextRun = useStore((s) => s.setTextRun);
 
   /** Set while we scroll programmatically, so it is not read back as intent. */
   const scrollingTo = useRef<number | null>(null);
@@ -384,6 +391,14 @@ export function Viewer() {
                   field.pageIndex === page.index && isPositioned(field)
               )}
               selectedFields={selectedFields}
+              textMode={textMode}
+              textRuns={textRuns[page.index]}
+              onNeedTextRuns={() => void loadTextRuns(page.index)}
+              editingTextRun={editingTextRun}
+              onEditTextRun={editTextRun}
+              onCommitTextRun={(runId, value) =>
+                void setTextRun(page.index, runId, value)
+              }
               editing={editing}
               draft={fieldDraft}
               onDraft={setFieldDraft}
@@ -448,6 +463,12 @@ interface PageCanvasProps {
   renderingAvailable: boolean;
   fields: PositionedField[];
   selectedFields: string[];
+  textMode: boolean;
+  textRuns: TextRun[] | undefined;
+  onNeedTextRuns: () => void;
+  editingTextRun: string | null;
+  onEditTextRun: (key: string | null) => void;
+  onCommitTextRun: (runId: number, value: string) => void;
   editing: string | null;
   draft: { name: string; value: string } | null;
   onDraft: (name: string, value: string) => void;
@@ -473,6 +494,12 @@ function PageCanvas({
   renderingAvailable,
   fields,
   selectedFields,
+  textMode,
+  textRuns,
+  onNeedTextRuns,
+  editingTextRun,
+  onEditTextRun,
+  onCommitTextRun,
   editing,
   draft,
   onDraft,
@@ -491,6 +518,13 @@ function PageCanvas({
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [drawBox, setDrawBox] = useState<ScreenRect | null>(null);
   const drawStart = useRef<{ x: number; y: number } | null>(null);
+
+  // Text is read per page and only while the mode is on: a long document would
+  // otherwise pay to parse every page's drawing commands up front.
+  const runs = textRuns;
+  useEffect(() => {
+    if (textMode && runs === undefined) onNeedTextRuns();
+  }, [textMode, runs, onNeedTextRuns]);
 
   // CSS pixels per PDF point. The image is rasterized at VIEWER_DPI and scaled
   // down by CSS, which keeps it sharp on HiDPI displays.
@@ -586,6 +620,17 @@ function PageCanvas({
           </div>
         )}
 
+        {textMode && (
+          <TextLayer
+            page={page}
+            scale={scale}
+            runs={runs}
+            editingKey={editingTextRun}
+            onEdit={onEditTextRun}
+            onCommit={onCommitTextRun}
+          />
+        )}
+
         {fields.map((field) => (
           <FieldOverlay
             key={field.name}
@@ -624,6 +669,136 @@ function PageCanvas({
 
       <span className="page-slot__number">{page.index + 1}</span>
     </div>
+  );
+}
+
+/**
+ * The page's own text, drawn as clickable boxes over the rendered image.
+ *
+ * Runs come from the page's drawing commands, so there is nothing to select in
+ * the usual sense — each box is one stretch of text that can be replaced whole.
+ */
+function TextLayer({
+  page,
+  scale,
+  runs,
+  editingKey,
+  onEdit,
+  onCommit,
+}: {
+  page: PageInfo;
+  scale: number;
+  runs: TextRun[] | undefined;
+  editingKey: string | null;
+  onEdit: (key: string | null) => void;
+  onCommit: (runId: number, value: string) => void;
+}) {
+  if (!runs) {
+    return (
+      <div className="text-layer__loading">Reading this page&rsquo;s text&hellip;</div>
+    );
+  }
+
+  return (
+    <>
+      {runs.map((run) => {
+        const key = `${page.index}:${run.id}`;
+        return (
+          <TextRunBox
+            key={key}
+            run={run}
+            page={page}
+            scale={scale}
+            editing={editingKey === key}
+            onEdit={() => onEdit(key)}
+            onCancel={() => onEdit(null)}
+            onCommit={(value) => onCommit(run.id, value)}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+function TextRunBox({
+  run,
+  page,
+  scale,
+  editing,
+  onEdit,
+  onCancel,
+  onCommit,
+}: {
+  run: TextRun;
+  page: PageInfo;
+  scale: number;
+  editing: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onCommit: (value: string) => void;
+}) {
+  const box = pdfRectToScreen(run.rect, page, scale);
+  const [draft, setDraft] = useState(run.text);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) setDraft(run.text);
+  }, [editing, run.text]);
+
+  useEffect(() => {
+    if (!editing) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [editing]);
+
+  const style: React.CSSProperties = {
+    left: box.left,
+    top: box.top,
+    width: box.width,
+    height: box.height,
+  };
+
+  if (editing) {
+    const commit = () => {
+      if (draft === run.text) onCancel();
+      else onCommit(draft);
+    };
+
+    return (
+      <input
+        ref={inputRef}
+        className="text-run__editor"
+        style={{ ...style, fontSize: Math.max(8, run.fontSize * scale) }}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          // Delete and the arrow keys belong to the text being typed, not to
+          // the page behind it.
+          event.stopPropagation();
+          if (event.key === 'Enter') commit();
+          if (event.key === 'Escape') onCancel();
+        }}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={`text-run${run.exactEdit ? '' : ' text-run--substitutes'}`}
+      style={style}
+      title={
+        run.exactEdit
+          ? `${run.text}
+
+Click to edit (${run.fontName})`
+          : `${run.text}
+
+Click to edit. ${run.fontName} cannot be written to directly, so this will be redrawn in Helvetica.`
+      }
+      onClick={onEdit}
+    />
   );
 }
 

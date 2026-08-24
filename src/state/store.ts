@@ -9,7 +9,7 @@
 
 import { create } from 'zustand';
 import * as ipc from '@/lib/ipc';
-import type { DocumentInfo, FieldKind, FormField, NewField } from '@/lib/types';
+import type { DocumentInfo, FieldKind, FormField, NewField, TextRun } from '@/lib/types';
 import { isPlaced, isPositioned } from '@/lib/types';
 import type { PlacedField, PositionedField } from '@/lib/types';
 import { roundRect, screenDeltaToPdf, translateRect, type PdfRect } from '@/lib/geometry';
@@ -113,6 +113,23 @@ interface AppState {
    */
   editingField: string | null;
   /**
+   * Whether the page's own text is editable, rather than only its form fields.
+   *
+   * A mode rather than a always-on overlay: a page can carry hundreds of text
+   * runs, and having every label on the page respond to clicks would make the
+   * fields underneath them unreachable.
+   */
+  textMode: boolean;
+  /**
+   * Text runs by page index, loaded on demand while [`textMode`] is on.
+   *
+   * Cleared whenever the document changes, because a run's id is a position in
+   * the page's drawing commands and any edit renumbers them.
+   */
+  textRuns: Record<number, TextRun[]>;
+  /** The run open for typing, as `pageIndex:runId`. */
+  editingTextRun: string | null;
+  /**
    * Text being typed but not yet committed, and which field it belongs to.
    *
    * The page and the fields panel both edit the same value, so the in-progress
@@ -183,6 +200,12 @@ interface AppState {
   extractSelection: (path: string) => Promise<void>;
 
   setFieldValue: (name: string, value: string) => Promise<void>;
+  toggleTextMode: () => void;
+  /** Loads a page's text runs if they are not already in hand. */
+  loadTextRuns: (pageIndex: number) => Promise<void>;
+  editTextRun: (key: string | null) => void;
+  setTextRun: (pageIndex: number, runId: number, text: string) => Promise<void>;
+
   /** Opens a field for typing, or closes the open one when passed null. */
   editField: (name: string | null) => void;
   /** Records in-progress text without writing it to the document. */
@@ -301,6 +324,10 @@ export const useStore = create<AppState>((set, get) => {
       doc,
       docs,
       fields,
+      // A text run's id is a position in the page's drawing commands, which
+      // any edit renumbers. Nothing cached survives a new snapshot.
+      textRuns: {},
+      editingTextRun: null,
       // Keep the viewport and both selections valid after pages or fields go.
       currentPage: Math.min(state.currentPage, Math.max(0, pageCount - 1)),
       selectedPages: state.selectedPages.filter((index) => index < pageCount),
@@ -326,6 +353,9 @@ export const useStore = create<AppState>((set, get) => {
     selectedFields: [],
     editingField: null,
     fieldDraft: null,
+    textMode: false,
+    textRuns: {},
+    editingTextRun: null,
     focus: null,
     zoom: 1,
     panel: 'pages',
@@ -601,6 +631,48 @@ export const useStore = create<AppState>((set, get) => {
 
       await run(async () => {
         await adopt(await ipc.setFormField(name, value));
+      });
+    },
+
+    toggleTextMode: () =>
+      set((state) => ({
+        textMode: !state.textMode,
+        editingTextRun: null,
+        // Leaving the mode drops the cache; re-entering reloads what is
+        // actually on screen rather than whatever was last looked at.
+        textRuns: state.textMode ? {} : state.textRuns,
+        // Field selection and text selection are different modes of working.
+        selectedFields: [],
+        editingField: null,
+      })),
+
+    loadTextRuns: async (pageIndex) => {
+      if (get().textRuns[pageIndex]) return;
+
+      try {
+        const runs = await ipc.listTextRuns(pageIndex);
+        // The document may have changed while this was in flight.
+        set((state) => ({ textRuns: { ...state.textRuns, [pageIndex]: runs } }));
+      } catch (error) {
+        set({ error: ipc.errorMessage(error) });
+      }
+    },
+
+    editTextRun: (key) => set({ editingTextRun: key }),
+
+    setTextRun: async (pageIndex, runId, text) => {
+      set({ editingTextRun: null });
+
+      await run(async () => {
+        const edit = await ipc.setTextRun(pageIndex, runId, text);
+        await adopt(edit.document);
+
+        if (edit.outcome === 'redrawn') {
+          set({
+            notice:
+              'The original font could not spell that, so the text was redrawn in Helvetica.',
+          });
+        }
       });
     },
 

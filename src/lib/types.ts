@@ -40,6 +40,34 @@ export interface DocumentInfo {
 // Forms — pdf/forms.rs
 // ---------------------------------------------------------------------------
 
+/**
+ * A stretch of text drawn on a page, outside any form field.
+ *
+ * These come from the page's drawing commands rather than from a structure the
+ * PDF format tracks, so `id` is a position in that command list — stable only
+ * for as long as the page is not edited.
+ */
+export interface TextRun {
+  id: number;
+  pageIndex: number;
+  text: string;
+  /** `[x0, y0, x1, y1]` in PDF user space — origin is bottom-left. */
+  rect: [number, number, number, number];
+  fontSize: number;
+  /** The font's resource name, shown for context. */
+  fontName: string;
+  /** False when editing would have to substitute a different font. */
+  exactEdit: boolean;
+}
+
+/** Whether an edit kept the original font or had to redraw in another. */
+export type TextEditOutcome = 'inPlace' | 'redrawn';
+
+export interface TextEdit {
+  document: DocumentInfo;
+  outcome: TextEditOutcome;
+}
+
 export type FieldKind =
   'text' | 'checkbox' | 'radio' | 'pushButton' | 'choice' | 'signature' | 'unknown';
 

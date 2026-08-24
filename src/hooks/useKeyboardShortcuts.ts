@@ -161,6 +161,14 @@ export function useKeyboardShortcuts(): void {
         return;
       }
 
+      // Escape leaves the page-text mode, matching how it cancels an armed
+      // field tool. The editor handles its own Escape before this sees it.
+      if (event.key === 'Escape' && state.textMode) {
+        event.preventDefault();
+        state.toggleTextMode();
+        return;
+      }
+
       // Enter opens the selected field for typing, the same as double-clicking
       // it. Only with exactly one selected - there is no sensible field to put
       // the cursor in otherwise.

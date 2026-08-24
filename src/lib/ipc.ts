@@ -15,6 +15,8 @@ import type {
   PrintSettings,
   PrinterCapabilities,
   PrinterInfo,
+  TextEdit,
+  TextRun,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -63,6 +65,16 @@ export const appendPdf = (path: string) => invoke<DocumentInfo>('append_pdf', { 
 
 export const extractPagesToFile = (indices: number[], path: string) =>
   invoke<void>('extract_pages_to_file', { indices, path });
+
+// ---------------------------------------------------------------------------
+// Page text
+// ---------------------------------------------------------------------------
+
+export const listTextRuns = (pageIndex: number) =>
+  invoke<TextRun[]>('list_text_runs', { pageIndex });
+
+export const setTextRun = (pageIndex: number, runId: number, text: string) =>
+  invoke<TextEdit>('set_text_run', { pageIndex, runId, text });
 
 // ---------------------------------------------------------------------------
 // Forms

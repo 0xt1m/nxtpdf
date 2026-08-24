@@ -103,6 +103,28 @@ body,
   margin: 0;
 }
 
+/*
+  This is an application, not a page.
+
+  Dragging across the UI highlighting labels, buttons and panel headings is
+  web behaviour that reads as a glitch here - and one stray drag on a page
+  left half the chrome selected. Selection is opted back in below, only where
+  it means something.
+*/
+body {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The places the user actually types. */
+input,
+textarea,
+select,
+[contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 body {
   font-family: var(--font);
   font-size: 13px;
@@ -304,7 +326,6 @@ textarea:disabled {
   gap: 8px;
   margin-bottom: 8px;
   cursor: pointer;
-  user-select: none;
 }
 
 .checkbox input,
@@ -365,7 +386,6 @@ textarea:disabled {
   font-size: 15px;
   font-weight: 700;
   letter-spacing: -0.03em;
-  user-select: none;
 }
 
 .toolbar__logo {
@@ -705,7 +725,6 @@ textarea:disabled {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
-  user-select: none;
 }
 
 /* Hold space: the cursor says the pointer will drag the page, not select. */
@@ -721,7 +740,6 @@ textarea:disabled {
 .viewer__scroll--panning,
 .viewer__scroll--panning * {
   cursor: grabbing !important;
-  user-select: none;
 }
 
 .viewer--empty {
@@ -766,7 +784,6 @@ textarea:disabled {
   width: 100%;
   height: 100%;
   display: block;
-  user-select: none;
   border-radius: 2px;
 }
 
@@ -1490,7 +1507,6 @@ textarea:disabled {
   background: transparent;
   border-radius: var(--radius) var(--radius) 0 0;
   cursor: pointer;
-  user-select: none;
   transition:
     background 0.13s ease,
     color 0.13s ease;

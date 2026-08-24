@@ -1,5 +1,5 @@
 import { Fragment, useEffect } from 'react';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, FilePlus2 } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
 import { Toolbar } from '@/components/Toolbar';
 import { PageSidebar } from '@/components/PageSidebar';
@@ -12,6 +12,7 @@ import { StatusBar } from '@/components/StatusBar';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useAppUpdater } from '@/hooks/useAppUpdater';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import { useStore, type SidePanel } from '@/state/store';
 import * as ipc from '@/lib/ipc';
 
@@ -52,6 +53,7 @@ export default function App() {
 
   useKeyboardShortcuts();
   const updater = useAppUpdater();
+  const dragging = useFileDrop();
 
   // Pick up a document that survived a webview reload during development.
   useEffect(() => {
@@ -116,6 +118,16 @@ export default function App() {
       <StatusBar />
 
       {printDialogOpen && <PrintDialog onClose={closePrintDialog} />}
+
+      {dragging && (
+        <div className="drop-target">
+          <div className="drop-target__card">
+            <FilePlus2 size={28} />
+            <strong>Drop to open</strong>
+            <span>PDF files open in new tabs.</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

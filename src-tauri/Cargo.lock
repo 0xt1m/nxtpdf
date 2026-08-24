@@ -2512,7 +2512,7 @@ dependencies = [
 
 [[package]]
 name = "nxtpdf"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "image",
  "log",

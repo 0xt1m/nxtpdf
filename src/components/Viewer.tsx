@@ -308,12 +308,12 @@ export function Viewer() {
   // Arming a tool cancels any in-progress edit; they are different modes.
   useEffect(() => {
     if (pendingField) setEditing(null);
-  }, [pendingField]);
+  }, [pendingField, setEditing]);
 
   // Switching document must not leave an editor open on a same-named field.
   useEffect(() => {
     setEditing(null);
-  }, [doc?.id]);
+  }, [doc?.id, setEditing]);
 
   if (!doc) {
     return (

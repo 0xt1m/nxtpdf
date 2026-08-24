@@ -14,6 +14,7 @@ use tauri::State;
 use crate::error::{AppError, AppResult};
 use crate::pdf::document::{self, DocumentInfo};
 use crate::pdf::forms::{self, FormField, NewField};
+use crate::pdf::text::{self, EditOutcome, TextRun};
 use crate::printing;
 use crate::printing::types::{PrintJobResult, PrintSettings, PrinterCapabilities, PrinterInfo};
 use crate::state::{AppState, DocumentId, DocumentSession};
@@ -194,6 +195,44 @@ pub fn extract_pages_to_file(
         let mut extracted = document::extract_pages(&session.doc, &indices)?;
         document::save_to_path(&mut extracted, &destination)?;
         Ok(())
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Page text
+// ---------------------------------------------------------------------------
+
+/// Lists the editable text drawn on a page.
+#[tauri::command]
+pub fn list_text_runs(state: State<'_, AppState>, page_index: usize) -> AppResult<Vec<TextRun>> {
+    state.with_document(|session| text::list_text_runs(&session.doc, page_index))
+}
+
+/// The result of editing page text, so the UI can say when the original font
+/// could not be kept.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextEdit {
+    pub document: DocumentInfo,
+    pub outcome: EditOutcome,
+}
+
+#[tauri::command]
+pub fn set_text_run(
+    state: State<'_, AppState>,
+    page_index: usize,
+    run_id: usize,
+    text: String,
+) -> AppResult<TextEdit> {
+    let mut workspace = state.workspace.lock();
+    let session = workspace.active_mut().ok_or(AppError::NoDocument)?;
+
+    let outcome = text::set_text_run(&mut session.doc, page_index, run_id, &text)?;
+    session.touch();
+
+    Ok(TextEdit {
+        document: snapshot(session),
+        outcome,
     })
 }
 

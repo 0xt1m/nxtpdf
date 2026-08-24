@@ -1,6 +1,6 @@
 [package]
 name = "nxtpdf"
-version = "1.0.0"
+version = "1.1.0"
 description = "A simple, fast PDF editor with real print control."
 authors = ["NXTPDF contributors"]
 edition = "2021"

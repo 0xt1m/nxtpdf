@@ -139,19 +139,34 @@ So `push_down_inherited` runs first, copying each inherited attribute onto the
 page dictionaries that were relying on it. Only then is the tree rebuilt.
 `prune_objects` then drops the now-unreachable intermediate nodes.
 
-## Form filling and `/NeedAppearances`
+## Form appearances
 
-Setting a field value writes `/V` and sets the form's `/NeedAppearances` to
-true, asking the viewer to regenerate the field's visual appearance from its
-value. Any stale `/AP` stream on the field is removed so it cannot mask the new
-value.
+A field has a value (`/V`) and a drawn appearance (`/AP` `/N`). Setting a value
+alone and asking the viewer to repaint — via the form's `/NeedAppearances`
+flag — is correct per the spec and honoured by mainstream viewers, but PDFium
+ignores it. Since PDFium renders both the viewer and the printed output, a form
+filled that way came out blank in this app.
 
-This is correct per the spec and honored by every mainstream viewer. The
-tradeoff is real and worth knowing: **the appearance is not baked into the
-file.** A renderer that ignores `/NeedAppearances` shows the old visuals, and
-flattening a form to static content is not possible without generating real
-`/AP` content streams — which means font metrics, text layout, and clipping.
-That is the work required to lift this from "fills forms" to "flattens forms".
+So values are painted here: `set_field_value` writes `/V` **and** builds the
+`/AP` `/N` stream to match, with the font metrics, auto-sizing and clipping
+that implies. `/NeedAppearances` is still set, for viewers that would rather
+repaint than trust ours.
+
+Two repairs run when a document is opened, both driven by files that render
+blank everywhere except Acrobat:
+
+- `regenerate_missing_appearances` paints values that arrived with none.
+- `reattach_orphaned_widgets` puts widgets back into their page's `/Annots`.
+  A widget is only drawn because a page lists it; the AcroForm `/Fields` array
+  only says the field exists. Several generators write the field tree and leave
+  `/Annots` empty, which Acrobat papers over by rebuilding the list from each
+  widget's `/P` back-pointer.
+
+Even attached and painted, PDFium does not draw widget annotations during page
+rendering — its form-fill module owns them. So `DocumentSession::bytes`, which
+feeds both the viewer and the printer, flattens each appearance into the page
+content as an ordinary form XObject. That happens on a throwaway copy; the
+document that gets saved keeps its live, editable fields.
 
 Checkboxes are subtler than they look: the "on" state is not `/On`. It is
 whatever key appears in the widget's `/AP` `/N` dictionary that is not `/Off` —
@@ -239,31 +254,48 @@ For the printer, note that GDI's coordinate origin is the printable area, not
 the sheet. Aligning to the physical page — which "Actual size" does, so the
 margins match what a ruler measures — means subtracting `PHYSICALOFFSETX/Y`.
 
-## Why text editing is not here
+## Editing page text
 
-The most-requested missing feature, and the one that would dominate the
-schedule.
+Everything on a page that is not a form field is drawing commands. PDF has no
+notion of paragraphs, words, or even lines: text is a sequence of positioned
+glyph-drawing operators, usually in a **subsetted** embedded font whose
+program contains only the glyphs already used.
 
-PDF has no notion of paragraphs, words, or even lines. Text is a sequence of
-positioned glyph-drawing operators in a compressed content stream, drawn with a
-**subsetted** embedded font — the font program inside the file often contains
-only the glyphs already used.
+`pdf/text.rs` works with those directly.
 
-So changing "Smith" to "Schmidt" means:
+**Reading** walks the content stream tracking the graphics and text state
+(`cm`, `q`/`Q`, `Tm`/`Td`/`TD`/`T*`, `Tf`, `Tc`/`Tw`/`Tz`/`TL`/`Ts`), so every
+show-text operator gets a position, a size and a bounding box. The bytes it
+shows are decoded through the font: simple fonts via their encoding plus any
+`/Differences`, composite fonts via `/ToUnicode`.
 
-- locating the operators that drew it, across arbitrary positioning operators;
-- discovering there is no `c` or `d` glyph in the subset, and no width metrics
-  for them;
-- embedding a replacement font or extending the subset;
-- re-shaping the run and recomputing advance widths;
-- reflowing the rest of the line, and possibly the paragraph and page.
+**Merging** happens before anything is shown to the user. Producers routinely
+split a word across operators to apply kerning, so `MILEAGE` arrives as `MIL`,
+`E`, `AGE`. Listing those separately would describe the file accurately and
+help nobody. The rule is deterministic, so reading and editing group
+identically. A word space drawn as a gap rather than as a space character is
+restored, or `SALES TAX` reads back as `SALESTAX` — and would be written back
+that way.
 
-A narrow version — edit a single run in place, fall back to embedding a full
-font when glyphs are missing — is perhaps three weeks and would cover most
-real-world "fix a typo, change a date" cases. Full Acrobat-style reflow requires
-a document reconstruction engine and is a multi-month project on its own.
+**Writing** takes one of two paths:
 
-It was scoped out deliberately, not overlooked.
+- The run's own font can spell the replacement → the string is rewritten in
+  place. Visually seamless; the original typesetting is preserved.
+- It cannot → the original operators are emptied and the text is redrawn in
+  Helvetica. Visibly a substitution, which is why the outcome is reported back
+  and surfaced in the UI.
+
+Two things constrain the first path. An embedded font is a subset, so having an
+*encoding* for a character does not mean the *outline* is present; the codes the
+page already draws are the only available evidence, and an in-place edit stays
+within them. And lopdf parses an inline image into an operation holding a
+stream, which cannot be written back as valid inline-image syntax — a page
+containing one is only ever appended to, never rewritten, and is the single
+case where old text is covered by a white patch rather than removed.
+
+What is still not here is **reflow**. A run is edited where it sits. Re-wrapping
+a paragraph would require paragraph structure that the file does not contain,
+and reconstructing it is a document-analysis project rather than a feature.
 
 ## Known limitations
 
@@ -284,3 +316,6 @@ It was scoped out deliberately, not overlooked.
 - **Form field creation covers text, checkbox, and dropdown.** Radio groups
   need a shared parent field with per-widget export values, which the current
   merged field/widget model does not express.
+- **Edited text does not reflow**, and new characters missing from a subset
+  font are redrawn in Helvetica rather than added to the font. Extending a
+  subset means rewriting the font program.

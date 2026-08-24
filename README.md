@@ -18,6 +18,12 @@ Tauri 2 + React 19 + TypeScript on the front, Rust on the back.
 - **Build forms** — arm a tool from the Add strip, then drag on the page to
   size the field. Move and resize with the mouse or the arrow keys, rename,
   copy and paste, and set text size including auto-fit.
+- **Edit the page's own text** — turn on **Edit page text** and click any
+  heading, label or paragraph to retype it. Where the document's font can
+  spell the replacement it is rewritten in that font and the result is
+  indistinguishable from the original; where it cannot, the text is redrawn in
+  Helvetica and the app says so. Text does not reflow — a run is edited where
+  it sits.
 - **Print properly** — choose the **tray**, one- or two-sided (long or short
   edge), **color or black and white**, paper size, orientation, copies,
   collation, page range, and scaling. Every option is read from the driver, so
@@ -31,11 +37,12 @@ Tauri 2 + React 19 + TypeScript on the front, Rust on the back.
 
 ## What it does not do
 
-- **Editing existing page text.** Deliberately out of scope — see
-  [docs/architecture.md](docs/architecture.md) for why it is the expensive part.
-- **Flattening forms.** Field values are written with `/NeedAppearances`, so
-  viewers regenerate the visuals. A renderer that ignores that flag shows stale
-  appearances.
+- **Reflowing text.** Editing a run replaces it where it sits; it does not
+  re-wrap a paragraph, because there is no paragraph structure in the file to
+  re-wrap. Much longer text will run into whatever is drawn to its right.
+- **Rebuilding subset fonts.** Most embedded fonts carry only the glyphs the
+  document already uses, so new characters they lack are redrawn in Helvetica
+  rather than added to the font.
 - **Undo.** There is no command stack yet; Save early.
 - **Radio group creation, digital signatures, redaction.**
 - **Printing on macOS or Linux.** The print backend is Windows-only; everything
@@ -106,11 +113,13 @@ src/                      React frontend
 src-tauri/
   src/pdf/     document.rs page tree surgery (lopdf)
                forms.rs    AcroForm read/write/create (lopdf)
+               text.rs     reading and editing page text (lopdf)
                render.rs   rasterization (PDFium)
   src/printing/types.rs    platform-neutral print vocabulary
                windows.rs  GDI + DEVMODE: the tray/duplex/color implementation
   src/commands.rs          the entire IPC contract
   examples/printers.rs     printer capability dump
+           sweep.rs        run the form repairs over a folder of PDFs
 scripts/fetch-pdfium.mjs   downloads the native PDF engine
 ```
 

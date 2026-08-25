@@ -742,6 +742,21 @@ textarea:disabled {
   cursor: grabbing !important;
 }
 
+/*
+  While panning is armed, the overlays stop taking pointer events.
+
+  A field box captures the pointer on mousedown so it can be dragged, which
+  meant a pan starting over one was swallowed: the scroll container never saw
+  the drag. On a dense form that is most of the page, and it looked like
+  panning simply did not work in the direction where the fields are.
+*/
+.viewer__scroll--pan .field-box,
+.viewer__scroll--pan .field-handle,
+.viewer__scroll--pan .text-run,
+.viewer__scroll--pan .page-surface__image {
+  pointer-events: none;
+}
+
 .viewer--empty {
   align-items: center;
   justify-content: center;
@@ -1641,6 +1656,14 @@ textarea:disabled {
 */
 .text-run {
   position: absolute;
+  /*
+    Above an unselected field box.
+
+    The field overlays are drawn after these and would otherwise paint on top
+    and take the clicks. On a dense form that covers most of the page, which
+    left the text underneath unreachable in the one mode meant for editing it.
+  */
+  z-index: 2;
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
@@ -1667,8 +1690,8 @@ textarea:disabled {
 
 .text-run__editor {
   position: absolute;
-  /* Sits above neighbouring runs, which it deliberately overlaps. */
-  z-index: 3;
+  /* Above neighbouring runs and any field box it overlaps. */
+  z-index: 6;
   box-sizing: border-box;
   padding: 0 5px;
   font-family: var(--font);

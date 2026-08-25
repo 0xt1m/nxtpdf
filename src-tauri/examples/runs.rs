@@ -19,7 +19,7 @@ fn main() {
     let runs = text::list_text_runs(&doc, page).expect("runs");
 
     println!("{} run(s) on page {}", runs.len(), page + 1);
-    for run in runs.iter().take(50) {
+    for run in runs.iter() {
         let [x0, y0, x1, y1] = run.rect;
         println!(
             "  #{:<4} x {:>7.1}..{:<7.1} y {:>7.1}..{:<7.1} {:>5.1}pt {:<8} {} {:?}",
@@ -34,10 +34,6 @@ fn main() {
             run.text,
         );
     }
-    if runs.len() > 50 {
-        println!("  ... {} more", runs.len() - 50);
-    }
-
     let Some(output) = output else { return };
 
     // Draw each box over the page at the same DPI, so any offset between a box

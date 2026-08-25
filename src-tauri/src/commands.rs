@@ -285,6 +285,38 @@ pub fn create_form_field(state: State<'_, AppState>, field: NewField) -> AppResu
     mutate(&state, |doc| forms::create_field(doc, &field))
 }
 
+/// One field's new rectangle, for a batched move.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldMove {
+    pub name: String,
+    pub rect: [f32; 4],
+}
+
+/// Moves several fields as one change.
+///
+/// Nudging a multi-field selection with the arrow keys is a single action, so
+/// it has to be a single entry in the history and a single re-render - not one
+/// per field, which would take as many presses of Undo to reverse as there
+/// were fields selected.
+#[tauri::command]
+pub fn move_form_fields(
+    state: State<'_, AppState>,
+    moves: Vec<FieldMove>,
+) -> AppResult<DocumentInfo> {
+    state.with_document(|session| {
+        // Merging, so holding an arrow key stays one step.
+        session.checkpoint_merging("move-fields");
+
+        for entry in &moves {
+            forms::set_field_rect(&mut session.doc, &entry.name, entry.rect)?;
+        }
+
+        session.touch();
+        Ok(snapshot(session))
+    })
+}
+
 /// Moves or resizes a field on its page. `rect` is `[x0, y0, x1, y1]` in PDF
 /// user space, origin bottom-left.
 #[tauri::command]

@@ -15,6 +15,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use pdfium_render::prelude::Pdfium;
@@ -33,6 +34,13 @@ pub type DocumentId = u64;
 /// Each entry is the whole document serialized, so the bound is about memory
 /// rather than about how far anyone plausibly wants to go back.
 const HISTORY_DEPTH: usize = 40;
+
+/// Consecutive changes of the same kind inside this window become one step.
+///
+/// Holding an arrow key to slide a field across the page is one movement to
+/// the person doing it. Recording forty of them would make Undo useless and
+/// would push every earlier edit out of a bounded history.
+const COALESCE_WINDOW: Duration = Duration::from_millis(700);
 
 /// One open document and everything we track about it.
 pub struct DocumentSession {
@@ -58,6 +66,9 @@ pub struct DocumentSession {
     undo: Vec<Vec<u8>>,
     redo: Vec<Vec<u8>>,
 
+    /// The kind and time of the last recorded step, for coalescing.
+    last_step: Option<(&'static str, Instant)>,
+
     /// Where in the history the file on disk sits.
     ///
     /// `undo.len()` identifies a position in a linear history: undoing
@@ -77,6 +88,7 @@ impl DocumentSession {
             serialized: None,
             undo: Vec::new(),
             redo: Vec::new(),
+            last_step: None,
             saved_at: Some(0),
         }
     }
@@ -86,6 +98,27 @@ impl DocumentSession {
     /// Call this immediately *before* mutating, while the document still holds
     /// what the user would expect to get back.
     pub fn checkpoint(&mut self) {
+        self.record(None);
+    }
+
+    /// Records a step that merges with an immediately preceding one of the
+    /// same kind, so a held key or a repeated gesture undoes in one go.
+    pub fn checkpoint_merging(&mut self, kind: &'static str) {
+        self.record(Some(kind));
+    }
+
+    fn record(&mut self, kind: Option<&'static str>) {
+        if let Some(kind) = kind {
+            if let Some((last, at)) = self.last_step {
+                if last == kind && at.elapsed() < COALESCE_WINDOW {
+                    // The snapshot already on the stack is the state this
+                    // whole gesture started from, which is what to go back to.
+                    self.last_step = Some((kind, Instant::now()));
+                    return;
+                }
+            }
+        }
+
         let mut buffer = Vec::new();
         if let Err(error) = self.doc.save_to(&mut buffer) {
             // Losing one step of history is bad; refusing the edit outright
@@ -95,6 +128,7 @@ impl DocumentSession {
         }
 
         self.undo.push(buffer);
+        self.last_step = kind.map(|kind| (kind, Instant::now()));
         // A new edit abandons whatever was ahead in the history.
         self.redo.clear();
 
@@ -139,6 +173,9 @@ impl DocumentSession {
         self.doc = restored;
         self.revision = self.revision.wrapping_add(1);
         self.serialized = None;
+        // Whatever gesture was in progress is over; the next change starts a
+        // step of its own rather than merging into the one just restored.
+        self.last_step = None;
         self.refresh_dirty();
 
         Ok(true)
@@ -618,6 +655,61 @@ mod tests {
 
         session.undo().expect("undo");
         assert!(session.dirty, "moved away from what was written to disk");
+    }
+
+    /// Holding an arrow key is one movement to the person doing it.
+    #[test]
+    fn repeating_the_same_kind_of_change_is_one_step() {
+        let mut session = session_with_a_blank_page();
+        add_field(&mut session, "buyer");
+
+        for _ in 0..20 {
+            session.checkpoint_merging("move-fields");
+            session.touch();
+        }
+
+        assert_eq!(session.undo.len(), 2, "the field, then the whole movement");
+    }
+
+    #[test]
+    fn a_different_kind_of_change_starts_its_own_step() {
+        let mut session = session_with_a_blank_page();
+
+        session.checkpoint_merging("move-fields");
+        session.touch();
+        session.checkpoint_merging("resize-fields");
+        session.touch();
+
+        assert_eq!(session.undo.len(), 2);
+    }
+
+    /// Otherwise a nudge straight after an undo would merge into the step that
+    /// was just restored, and undoing again would skip past it.
+    #[test]
+    fn undoing_ends_the_gesture_being_merged_into() {
+        let mut session = session_with_a_blank_page();
+        add_field(&mut session, "buyer");
+
+        session.checkpoint_merging("move-fields");
+        session.touch();
+        session.undo().expect("undo");
+
+        session.checkpoint_merging("move-fields");
+        session.touch();
+
+        assert_eq!(session.undo.len(), 2);
+    }
+
+    #[test]
+    fn an_ordinary_checkpoint_never_merges() {
+        let mut session = session_with_a_blank_page();
+
+        for _ in 0..5 {
+            session.checkpoint();
+            session.touch();
+        }
+
+        assert_eq!(session.undo.len(), 5);
     }
 
     #[test]

@@ -816,11 +816,12 @@ export const useStore = create<AppState>((set, get) => {
       if (moves.length === 0) return;
 
       await run(async () => {
-        let latest = null;
-        for (const move of moves) {
-          latest = await ipc.setFormFieldRect(move.name, roundRect(move.rect));
-        }
-        if (latest) await adopt(latest);
+        // One call, so the whole nudge is one history step and one re-render.
+        await adopt(
+          await ipc.moveFormFields(
+            moves.map((move) => ({ name: move.name, rect: roundRect(move.rect) }))
+          )
+        );
       });
     },
 

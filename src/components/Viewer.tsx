@@ -920,6 +920,22 @@ function FieldOverlay({
     const fontSize = Math.max(8, Math.min(box.height * 0.68, 20));
     const commit = () => onCommit(text);
 
+    /*
+      Grown by its own chrome.
+
+      Boxes are border-box, so an editor sized to the field exactly loses its
+      border and padding out of the text area - enough to clip the first
+      character of a short value. Widening by that much and shifting left by
+      half keeps the text sitting where the field draws it.
+    */
+    const CHROME_PX = 10;
+    const editorStyle: React.CSSProperties = {
+      ...style,
+      left: box.left - CHROME_PX / 2,
+      width: box.width + CHROME_PX,
+      fontSize,
+    };
+
     // Stop Delete, arrows and Ctrl+A reaching the global shortcut handler,
     // which would otherwise delete or move the field being typed into.
     const onKeyDown = (event: React.KeyboardEvent) => {
@@ -940,7 +956,7 @@ function FieldOverlay({
         <select
           ref={selectRef}
           className="field-editor"
-          style={{ ...style, fontSize }}
+          style={editorStyle}
           value={text}
           onChange={(event) => {
             onDraft(event.target.value);
@@ -964,7 +980,7 @@ function FieldOverlay({
         <textarea
           ref={areaRef}
           className="field-editor"
-          style={{ ...style, fontSize }}
+          style={editorStyle}
           value={text}
           maxLength={field.maxLength ?? undefined}
           onChange={(event) => onDraft(event.target.value)}
@@ -978,7 +994,7 @@ function FieldOverlay({
       <input
         ref={inputRef}
         className="field-editor"
-        style={{ ...style, fontSize }}
+        style={editorStyle}
         type={field.password ? 'password' : 'text'}
         value={text}
         maxLength={field.maxLength ?? undefined}

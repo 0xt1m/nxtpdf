@@ -98,6 +98,11 @@ export const createFormField = (field: NewField) =>
 export const setFormFieldRect = (name: string, rect: [number, number, number, number]) =>
   invoke<DocumentInfo>('set_form_field_rect', { name, rect });
 
+/** Moves several fields as one change, so Undo reverses the whole gesture. */
+export const moveFormFields = (
+  moves: { name: string; rect: [number, number, number, number] }[]
+) => invoke<DocumentInfo>('move_form_fields', { moves });
+
 export const setFormFieldFontSize = (name: string, size: number) =>
   invoke<DocumentInfo>('set_form_field_font_size', { name, size });
 

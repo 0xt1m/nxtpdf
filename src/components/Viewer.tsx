@@ -289,8 +289,16 @@ export function Viewer() {
     }
 
     function onKeyDown(event: KeyboardEvent) {
-      if (event.code !== 'Space' || event.repeat || isTyping(event.target)) return;
+      if (event.code !== 'Space' || isTyping(event.target)) return;
+
+      // Every keydown must be prevented, auto-repeats included. Holding a key
+      // repeats it many times a second, and the browser's default action for
+      // Space on a scrollable element is to page down - so while the key was
+      // held the view crept downwards under the drag, and the moment the drag
+      // stopped masking it the page jumped.
       event.preventDefault();
+
+      if (event.repeat) return;
       setPanReady(true);
     }
 

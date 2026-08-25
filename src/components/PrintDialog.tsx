@@ -29,6 +29,7 @@ export function PrintDialog({ onClose }: PrintDialogProps) {
   const doc = useStore((s) => s.doc);
   const selectedPages = useStore((s) => s.selectedPages);
   const printPreset = useStore((s) => s.printPreset);
+  const currentPage = useStore((s) => s.currentPage);
 
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
   const [showVirtual, setShowVirtual] = useState(false);
@@ -49,12 +50,22 @@ export function PrintDialog({ onClose }: PrintDialogProps) {
   const [orientation, setOrientation] = useState<Orientation>('auto');
   const [scaling, setScaling] = useState<PageScaling>('fitToPage');
   const [reverseOrder, setReverseOrder] = useState(false);
-  // Ctrl+Shift+P opens straight onto the selection; Ctrl+P and the toolbar
-  // button open on the whole document.
-  const [rangeMode, setRangeMode] = useState<'all' | 'selected' | 'custom'>(
-    printPreset === 'selected' && selectedPages.length > 0 ? 'selected' : 'all'
+  /*
+    Ctrl+Shift+P opens straight onto the selection; Ctrl+P and the toolbar
+    button open on the whole document.
+
+    Asking to print the selection when nothing is selected still means "not the
+    whole document" — the page being read is the only thing it can reasonably
+    refer to, so the dialog opens on that as a range.
+  */
+  const wantsSubset = printPreset === 'selected';
+  const [rangeMode, setRangeMode] = useState<'all' | 'selected' | 'custom'>(() => {
+    if (!wantsSubset) return 'all';
+    return selectedPages.length > 0 ? 'selected' : 'custom';
+  });
+  const [customRange, setCustomRange] = useState(() =>
+    wantsSubset && selectedPages.length === 0 ? String(currentPage + 1) : ''
   );
-  const [customRange, setCustomRange] = useState('');
 
   // Load the printer list once, then select a sensible default.
   useEffect(() => {

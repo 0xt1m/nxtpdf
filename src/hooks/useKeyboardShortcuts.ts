@@ -66,6 +66,19 @@ export function useKeyboardShortcuts(): void {
             void (event.shiftKey ? saveDocumentAs() : saveDocument());
             return;
 
+          case 'z':
+          case 'y': {
+            // Inside a text box, Ctrl+Z means the browser's own undo of what
+            // is being typed. Taking it over there would throw away a
+            // half-written value to undo something else entirely.
+            if (typing) return;
+
+            event.preventDefault();
+            const forward = event.key.toLowerCase() === 'y' || event.shiftKey;
+            void (forward ? state.redo() : state.undo());
+            return;
+          }
+
           case 'o':
             event.preventDefault();
             void openDocument();

@@ -67,6 +67,13 @@ export const extractPagesToFile = (indices: number[], path: string) =>
   invoke<void>('extract_pages_to_file', { indices, path });
 
 // ---------------------------------------------------------------------------
+// History
+// ---------------------------------------------------------------------------
+
+export const undo = () => invoke<DocumentInfo>('undo');
+export const redo = () => invoke<DocumentInfo>('redo');
+
+// ---------------------------------------------------------------------------
 // Page text
 // ---------------------------------------------------------------------------
 

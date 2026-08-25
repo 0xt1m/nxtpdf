@@ -200,6 +200,10 @@ interface AppState {
   extractSelection: (path: string) => Promise<void>;
 
   setFieldValue: (name: string, value: string) => Promise<void>;
+  /** Steps back one change; does nothing when there is no history. */
+  undo: () => Promise<void>;
+  redo: () => Promise<void>;
+
   toggleTextMode: () => void;
   /** Loads a page's text runs if they are not already in hand. */
   loadTextRuns: (pageIndex: number) => Promise<void>;
@@ -631,6 +635,18 @@ export const useStore = create<AppState>((set, get) => {
 
       await run(async () => {
         await adopt(await ipc.setFormField(name, value));
+      });
+    },
+
+    undo: async () => {
+      await run(async () => {
+        await adopt(await ipc.undo());
+      });
+    },
+
+    redo: async () => {
+      await run(async () => {
+        await adopt(await ipc.redo());
       });
     },
 

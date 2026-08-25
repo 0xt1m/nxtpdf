@@ -1667,15 +1667,20 @@ textarea:disabled {
 
 .text-run__editor {
   position: absolute;
-  padding: 0 1px;
+  /* Sits above neighbouring runs, which it deliberately overlaps. */
+  z-index: 3;
+  box-sizing: border-box;
+  padding: 0 5px;
   font-family: var(--font);
   line-height: 1;
   color: #000;
   background: #fff;
   border: 1.5px solid var(--accent);
-  border-radius: 2px;
+  border-radius: 3px;
   outline: none;
-  box-shadow: 0 0 0 3px rgba(79, 124, 255, 0.18);
+  box-shadow:
+    0 0 0 3px rgba(79, 124, 255, 0.18),
+    var(--shadow-md, 0 6px 18px rgba(0, 0, 0, 0.18));
 }
 
 .field-toolbar__divider {

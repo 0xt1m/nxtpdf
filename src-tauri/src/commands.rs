@@ -37,8 +37,33 @@ where
     F: FnOnce(&mut lopdf::Document) -> AppResult<()>,
 {
     state.with_document(|session| {
+        // Recorded before the change, while the document still holds what the
+        // user would expect Undo to give back.
+        session.checkpoint();
         change(&mut session.doc)?;
         session.touch();
+        Ok(snapshot(session))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// History
+// ---------------------------------------------------------------------------
+
+/// Steps back one change. Succeeds with an unchanged snapshot when there is
+/// nothing to undo, so the UI does not have to treat that as an error.
+#[tauri::command]
+pub fn undo(state: State<'_, AppState>) -> AppResult<DocumentInfo> {
+    state.with_document(|session| {
+        session.undo()?;
+        Ok(snapshot(session))
+    })
+}
+
+#[tauri::command]
+pub fn redo(state: State<'_, AppState>) -> AppResult<DocumentInfo> {
+    state.with_document(|session| {
+        session.redo()?;
         Ok(snapshot(session))
     })
 }
@@ -130,7 +155,7 @@ pub fn save_document(state: State<'_, AppState>) -> AppResult<DocumentInfo> {
         })?;
 
         document::save_to_path(&mut session.doc, &path)?;
-        session.dirty = false;
+        session.mark_saved();
         Ok(snapshot(session))
     })
 }
@@ -142,7 +167,7 @@ pub fn save_document_as(state: State<'_, AppState>, path: String) -> AppResult<D
     state.with_document(|session| {
         document::save_to_path(&mut session.doc, &path)?;
         session.path = Some(path.clone());
-        session.dirty = false;
+        session.mark_saved();
         Ok(snapshot(session))
     })
 }
@@ -227,6 +252,7 @@ pub fn set_text_run(
     let mut workspace = state.workspace.lock();
     let session = workspace.active_mut().ok_or(AppError::NoDocument)?;
 
+    session.checkpoint();
     let outcome = text::set_text_run(&mut session.doc, page_index, run_id, &text)?;
     session.touch();
 

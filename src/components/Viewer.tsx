@@ -19,6 +19,10 @@ import {
 /** Movement below this is a click, not a drag. */
 const DRAG_THRESHOLD_PX = 3;
 
+/** Smallest usable height and width for the page-text editor, in CSS pixels. */
+const MIN_EDITOR_PX = 26;
+const MIN_EDITOR_WIDTH_PX = 160;
+
 /** Below this a drawn rectangle counts as a click, and a default size is used. */
 const MIN_DRAW_PX = 6;
 
@@ -639,6 +643,7 @@ function PageCanvas({
             scale={scale}
             selected={selectedFields.includes(field.name)}
             editing={editing === field.name}
+            textMode={textMode}
             draft={draft?.name === field.name ? draft.value : null}
             onDraft={(value) => onDraft(field.name, value)}
             onEditAdjacent={onEditAdjacent}
@@ -764,11 +769,31 @@ function TextRunBox({
       else onCommit(draft);
     };
 
+    /*
+      The editor cannot simply take the run's box.
+
+      A run's rectangle is the tight extent of its glyphs — body text at 100%
+      zoom is about nine pixels tall — which leaves an input no room for its
+      own line box, so the text inside is clipped away and the editor reads as
+      an empty white rectangle sitting on the page.
+
+      So it is given a workable size and centred on the text it replaces:
+      close enough to show what is being edited, large enough to read.
+    */
+    const height = Math.max(box.height + 8, MIN_EDITOR_PX);
+    const editorStyle: React.CSSProperties = {
+      left: box.left,
+      top: box.top + box.height / 2 - height / 2,
+      width: Math.max(box.width + 8, MIN_EDITOR_WIDTH_PX),
+      height,
+      fontSize: Math.min(Math.max(run.fontSize * scale, 12), 18),
+    };
+
     return (
       <input
         ref={inputRef}
         className="text-run__editor"
-        style={{ ...style, fontSize: Math.max(8, run.fontSize * scale) }}
+        style={editorStyle}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
@@ -808,6 +833,14 @@ interface FieldOverlayProps {
   scale: number;
   selected: boolean;
   editing: boolean;
+  /**
+   * True while the page-text mode is on.
+   *
+   * A field value is not page text — it is a different kind of object — but to
+   * someone reading the page it is just more text. So a single click opens it
+   * in that mode, the same as clicking a heading does.
+   */
+  textMode: boolean;
   /** In-progress text for this field, or null when it is not being typed into. */
   draft: string | null;
   onDraft: (value: string) => void;
@@ -836,6 +869,7 @@ function FieldOverlay({
   scale,
   selected,
   editing,
+  textMode,
   draft,
   onDraft,
   onEditAdjacent,
@@ -1039,6 +1073,13 @@ function FieldOverlay({
       // A plain click on a checkbox toggles it; other kinds just select.
       if (active.handle === null && field.kind === 'checkbox' && !field.readOnly) {
         onToggle();
+        return;
+      }
+
+      // In the page-text mode one click opens the value, so a filled field
+      // behaves like every other piece of text on the page.
+      if (active.handle === null && textMode && !field.readOnly) {
+        onEdit();
       }
       return;
     }
@@ -1090,6 +1131,7 @@ function FieldOverlay({
 
       {selected &&
         !field.readOnly &&
+        !textMode &&
         HANDLES.map((handle) => (
           <span
             key={handle.id}

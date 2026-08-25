@@ -101,6 +101,8 @@ pub fn run() {
             commands::reorder_pages,
             commands::append_pdf,
             commands::extract_pages_to_file,
+            commands::undo,
+            commands::redo,
             commands::list_text_runs,
             commands::set_text_run,
             commands::list_form_fields,

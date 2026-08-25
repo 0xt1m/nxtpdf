@@ -28,6 +28,12 @@ use crate::error::{AppError, AppResult};
 /// 3 must not come back holding whatever moved into slot 3.
 pub type DocumentId = u64;
 
+/// How many steps back the history keeps.
+///
+/// Each entry is the whole document serialized, so the bound is about memory
+/// rather than about how far anyone plausibly wants to go back.
+const HISTORY_DEPTH: usize = 40;
+
 /// One open document and everything we track about it.
 pub struct DocumentSession {
     pub id: DocumentId,
@@ -41,6 +47,23 @@ pub struct DocumentSession {
     pub revision: u64,
     /// Serialized bytes matching `revision`, lazily produced for rendering.
     serialized: Option<(u64, Vec<u8>)>,
+
+    /// States to go back to, oldest first, and states to go forward to.
+    ///
+    /// Whole-document snapshots rather than a command stack. Every edit here
+    /// is a different shape of change - page surgery, form values, content
+    /// stream rewrites - and an inverse operation would have to be written and
+    /// kept correct for each one. A snapshot is right for all of them by
+    /// construction, and the cost is bounded by [`HISTORY_DEPTH`].
+    undo: Vec<Vec<u8>>,
+    redo: Vec<Vec<u8>>,
+
+    /// Where in the history the file on disk sits.
+    ///
+    /// `undo.len()` identifies a position in a linear history: undoing
+    /// decrements it, redoing increments it. Comparing the two is what lets
+    /// undoing back to the last save clear the unsaved-changes marker.
+    saved_at: Option<usize>,
 }
 
 impl DocumentSession {
@@ -52,14 +75,98 @@ impl DocumentSession {
             dirty: false,
             revision: 1,
             serialized: None,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            saved_at: Some(0),
         }
+    }
+
+    /// Records the current state so the next change can be undone.
+    ///
+    /// Call this immediately *before* mutating, while the document still holds
+    /// what the user would expect to get back.
+    pub fn checkpoint(&mut self) {
+        let mut buffer = Vec::new();
+        if let Err(error) = self.doc.save_to(&mut buffer) {
+            // Losing one step of history is bad; refusing the edit outright
+            // would be worse.
+            log::warn!("could not record an undo step: {error}");
+            return;
+        }
+
+        self.undo.push(buffer);
+        // A new edit abandons whatever was ahead in the history.
+        self.redo.clear();
+
+        if self.undo.len() > HISTORY_DEPTH {
+            self.undo.remove(0);
+            // Everything shifted down, including where the saved state sits.
+            self.saved_at = self.saved_at.and_then(|at| at.checked_sub(1));
+        }
+    }
+
+    /// Steps back one change. Returns false when there is nothing to undo.
+    pub fn undo(&mut self) -> AppResult<bool> {
+        self.step(true)
+    }
+
+    /// Steps forward one change. Returns false when there is nothing to redo.
+    pub fn redo(&mut self) -> AppResult<bool> {
+        self.step(false)
+    }
+
+    fn step(&mut self, backwards: bool) -> AppResult<bool> {
+        let Some(target) = (if backwards {
+            self.undo.pop()
+        } else {
+            self.redo.pop()
+        }) else {
+            return Ok(false);
+        };
+
+        // Keep the state being left behind, so the move can be reversed.
+        let mut current = Vec::new();
+        self.doc.save_to(&mut current)?;
+
+        let restored = lopdf::Document::load_mem(&target)?;
+
+        if backwards {
+            self.redo.push(current);
+        } else {
+            self.undo.push(current);
+        }
+
+        self.doc = restored;
+        self.revision = self.revision.wrapping_add(1);
+        self.serialized = None;
+        self.refresh_dirty();
+
+        Ok(true)
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    /// Records that the file on disk now matches this state.
+    pub fn mark_saved(&mut self) {
+        self.saved_at = Some(self.undo.len());
+        self.dirty = false;
+    }
+
+    fn refresh_dirty(&mut self) {
+        self.dirty = self.saved_at != Some(self.undo.len());
     }
 
     /// Records a mutation. Call this after every edit.
     pub fn touch(&mut self) {
-        self.dirty = true;
         self.revision = self.revision.wrapping_add(1);
         self.serialized = None;
+        self.refresh_dirty();
     }
 
     /// Returns the document serialized to PDF bytes **for rendering and
@@ -364,6 +471,184 @@ mod tests {
         let (workspace, ids) = workspace_with(2);
         assert_eq!(workspace.find_by_path(Path::new("doc0.pdf")), Some(ids[0]));
         assert_eq!(workspace.find_by_path(Path::new("nope.pdf")), None);
+    }
+
+    // --- Undo history ---------------------------------------------------
+
+    use crate::pdf::forms::{self, FieldKind, NewField};
+
+    fn session_with_a_blank_page() -> DocumentSession {
+        DocumentSession::new(1, blank().expect("blank"), None)
+    }
+
+    /// Adds a named field, recording a history step first, exactly as the
+    /// command layer does.
+    fn add_field(session: &mut DocumentSession, name: &str) {
+        session.checkpoint();
+        forms::create_field(
+            &mut session.doc,
+            &NewField {
+                page_index: 0,
+                name: name.to_string(),
+                kind: FieldKind::Text,
+                rect: [72.0, 600.0, 300.0, 620.0],
+                font_size: Some(10.0),
+                multiline: false,
+                required: false,
+                max_length: None,
+                options: Vec::new(),
+            },
+        )
+        .expect("create");
+        session.touch();
+    }
+
+    fn field_names(session: &DocumentSession) -> Vec<String> {
+        forms::list_fields(&session.doc)
+            .into_iter()
+            .map(|field| field.name)
+            .collect()
+    }
+
+    #[test]
+    fn undo_restores_the_previous_state() {
+        let mut session = session_with_a_blank_page();
+        add_field(&mut session, "buyer");
+        assert_eq!(field_names(&session), vec!["buyer"]);
+
+        assert!(session.undo().expect("undo"));
+        assert!(field_names(&session).is_empty());
+    }
+
+    #[test]
+    fn undo_walks_back_one_step_at_a_time() {
+        let mut session = session_with_a_blank_page();
+        add_field(&mut session, "buyer");
+        add_field(&mut session, "seller");
+        assert_eq!(field_names(&session).len(), 2);
+
+        session.undo().expect("undo");
+        assert_eq!(field_names(&session), vec!["buyer"]);
+
+        session.undo().expect("undo");
+        assert!(field_names(&session).is_empty());
+    }
+
+    #[test]
+    fn undo_with_no_history_is_not_an_error() {
+        let mut session = session_with_a_blank_page();
+        assert!(!session.can_undo());
+        assert!(!session.undo().expect("undo"));
+    }
+
+    #[test]
+    fn redo_puts_the_change_back() {
+        let mut session = session_with_a_blank_page();
+        add_field(&mut session, "buyer");
+
+        session.undo().expect("undo");
+        assert!(session.can_redo());
+
+        assert!(session.redo().expect("redo"));
+        assert_eq!(field_names(&session), vec!["buyer"]);
+    }
+
+    /// Editing after undoing abandons the branch that was ahead — the standard
+    /// behaviour, and the reason redo cannot resurrect stale states.
+    #[test]
+    fn a_new_edit_discards_what_was_ahead() {
+        let mut session = session_with_a_blank_page();
+        add_field(&mut session, "buyer");
+        session.undo().expect("undo");
+        assert!(session.can_redo());
+
+        add_field(&mut session, "seller");
+        assert!(!session.can_redo());
+        assert_eq!(field_names(&session), vec!["seller"]);
+    }
+
+    #[test]
+    fn every_step_moves_the_revision_so_page_images_are_refetched() {
+        let mut session = session_with_a_blank_page();
+        let start = session.revision;
+
+        add_field(&mut session, "buyer");
+        let edited = session.revision;
+        assert_ne!(edited, start);
+
+        session.undo().expect("undo");
+        assert_ne!(session.revision, edited);
+    }
+
+    #[test]
+    fn undoing_back_to_the_saved_state_clears_the_unsaved_marker() {
+        let mut session = session_with_a_blank_page();
+        session.mark_saved();
+
+        add_field(&mut session, "buyer");
+        assert!(session.dirty);
+
+        session.undo().expect("undo");
+        assert!(
+            !session.dirty,
+            "back at the saved state, so nothing is unsaved"
+        );
+    }
+
+    #[test]
+    fn redoing_away_from_the_saved_state_marks_it_unsaved_again() {
+        let mut session = session_with_a_blank_page();
+        session.mark_saved();
+        add_field(&mut session, "buyer");
+        session.undo().expect("undo");
+
+        session.redo().expect("redo");
+        assert!(session.dirty);
+    }
+
+    #[test]
+    fn saving_after_an_undo_makes_that_the_clean_state() {
+        let mut session = session_with_a_blank_page();
+        add_field(&mut session, "buyer");
+        add_field(&mut session, "seller");
+        session.undo().expect("undo");
+
+        session.mark_saved();
+        assert!(!session.dirty);
+
+        session.undo().expect("undo");
+        assert!(session.dirty, "moved away from what was written to disk");
+    }
+
+    #[test]
+    fn history_is_bounded() {
+        let mut session = session_with_a_blank_page();
+        for index in 0..(HISTORY_DEPTH + 10) {
+            add_field(&mut session, &format!("field{index}"));
+        }
+
+        assert_eq!(session.undo.len(), HISTORY_DEPTH);
+    }
+
+    /// Dropping the oldest step shifts every position down, including the one
+    /// the saved state is recorded at.
+    #[test]
+    fn the_saved_position_survives_the_history_filling_up() {
+        let mut session = session_with_a_blank_page();
+        add_field(&mut session, "first");
+        session.mark_saved();
+
+        for index in 0..HISTORY_DEPTH {
+            add_field(&mut session, &format!("field{index}"));
+        }
+        assert!(session.dirty);
+
+        // Walk back to where the file on disk sits.
+        while session.can_undo() && session.dirty {
+            session.undo().expect("undo");
+        }
+        assert!(!session.dirty);
+        assert_eq!(field_names(&session), vec!["first"]);
     }
 
     #[test]
